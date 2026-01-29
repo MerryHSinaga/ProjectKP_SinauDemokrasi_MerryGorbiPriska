@@ -188,6 +188,7 @@ foreach ($st->fetchAll() as $m) {
       --header-gray:#d9d9d9;
       --row-line:#e6e6e6;
       --shadow:0 14px 22px rgba(0,0,0,.18);
+      --gold:#f4c430;
     }
 
     body{
@@ -201,14 +202,22 @@ foreach ($st->fetchAll() as $m) {
 
     .bg-maroon{background:var(--maroon)!important}
     .navbar{padding:20px 0;border-bottom:1px solid rgba(0,0,0,.15);}
-    .navbar-nav-simple{list-style:none;display:flex;align-items:center;gap:46px;margin:0;padding:0;}
-    .navbar-nav-simple .nav-link{color:#fff;font-weight:800;letter-spacing:.5px;text-decoration:none;position:relative;padding:6px 0 12px;}
-    .navbar-nav-simple .nav-link::after{
-      content:"";position:absolute;left:0;right:0;margin:auto;bottom:0;
-      width:0;height:3px;background:#fff;border-radius:2px;transition:.25s ease;opacity:.95;
+
+    /* ✅ LOGOUT STYLE (SAMA SEPERTI DASHBOARD) */
+    .nav-link{color:#fff !important;font-weight:500;}
+    .nav-hover{position:relative;padding-bottom:6px;}
+    .nav-hover::after{
+      content:"";
+      position:absolute;
+      left:0;
+      bottom:0;
+      width:0;
+      height:3px;
+      background:var(--gold);
+      transition:0.3s ease;
     }
-    .navbar-nav-simple .nav-link:hover::after{width:70px;}
-    .navbar-nav-simple .nav-link.active::after{width:70px;}
+    .nav-hover:hover::after,
+    .nav-active::after{width:100%;}
 
     .page{
       max-width:1200px;
@@ -237,6 +246,16 @@ foreach ($st->fetchAll() as $m) {
       margin-top:44px;background:#fff;border-radius:26px;overflow:hidden;
       box-shadow:var(--shadow);max-width:980px;margin-left:auto;margin-right:auto;
     }
+
+    /* ✅ BARU: tabel bisa discroll horizontal di mobile */
+    .table-scroll{
+      overflow-x:auto;
+      -webkit-overflow-scrolling:touch;
+    }
+    .table-grid{
+      min-width:860px;
+    }
+
     .table-head{
       background:var(--header-gray);padding:18px 34px;
       display:grid;grid-template-columns:90px 1fr 220px 90px;align-items:center;
@@ -257,7 +276,7 @@ foreach ($st->fetchAll() as $m) {
     .icon-btn:hover{background:rgba(112,13,9,.08);transform:translateY(-1px);}
     .icon-edit,.icon-trash{color:var(--maroon);font-size:22px;}
 
-    /* ===== MODAL (tidak merusak bootstrap) ===== */
+    /* ===== MODAL ===== */
     .label-plain{font-weight:600;font-size:14px;color:#111;margin-bottom:8px;}
     .input-pill{
       border:2px solid #111;border-radius:999px;
@@ -312,12 +331,13 @@ foreach ($st->fetchAll() as $m) {
     .dropzone{
       margin-top:12px;height:150px;border-radius:18px;background:#d9d9d9;border:2px dashed rgba(112,13,9,.25);
       display:flex;align-items:center;justify-content:center;text-align:center;cursor:pointer;
+      padding:12px;
     }
     .dropzone.dragover{outline:3px solid rgba(112,13,9,.35);}
     .dropzone .dz-icon{font-size:42px;color:#fff;}
-    .dropzone .dz-text{color:#fff;font-size:13px;font-weight:800;}
+    .dropzone .dz-text{color:#fff;font-size:13px;font-weight:800;word-break:break-word;}
 
-    .actions-row{display:flex;justify-content:flex-end;margin-top:16px;gap:10px;}
+    .actions-row{display:flex;justify-content:flex-end;margin-top:16px;gap:10px;flex-wrap:wrap;}
     .btn-save{
       border:0;background:var(--maroon);color:#fff;font-weight:800;font-size:14px;
       padding:12px 44px;border-radius:14px;
@@ -333,11 +353,35 @@ foreach ($st->fetchAll() as $m) {
     .btn-back:hover{filter:brightness(1.05);transform:translateY(-1px);}
     .btn-back i{font-size:22px;line-height:1;}
 
+    /* ✅ tablet */
     @media (max-width: 992px){
-      .navbar-nav-simple{display:none;}
       .title{font-size:40px;}
       .table-wrap{max-width:100%;}
-      .table-head,.table-row{grid-template-columns:70px 1fr 160px 70px;padding-left:18px;padding-right:18px;}
+      .page{padding:120px 16px 30px;}
+    }
+
+    /* ✅ mobile: font kecil + tabel geser kanan */
+    @media (max-width: 576px){
+      body{font-size:13px;}
+      .title{font-size:32px;}
+      .subtitle{font-size:12px;}
+      .btn-add{font-size:12px;padding:10px 18px;margin-top:10px;}
+      .table-head{font-size:16px;padding:14px 16px;}
+      .table-row{font-size:14px;padding:14px 16px;}
+      .icon-btn{width:40px;height:40px;}
+      .icon-edit,.icon-trash{font-size:20px;}
+      .modal-header-custom{padding:18px 18px 14px;}
+      .modal-title-custom{font-size:22px;}
+      .modal-subtitle-custom{font-size:12px;}
+      .modal-body{padding:14px 14px 16px;}
+      .label-plain{font-size:13px;}
+      .input-pill{font-size:13px;padding:9px 14px;}
+      .btn-save{font-size:12px;padding:10px 18px;border-radius:12px;}
+      .dropzone{height:140px;}
+      .dropzone .dz-icon{font-size:40px;}
+      .dropzone .dz-text{font-size:12px;}
+
+      .table-grid{min-width:760px;}
     }
   </style>
 </head>
@@ -347,7 +391,6 @@ foreach ($st->fetchAll() as $m) {
   <div class="container d-flex justify-content-between align-items-center">
 
     <div class="d-flex align-items-center gap-2">
-
       <a class="btn-back" href="javascript:history.back()" aria-label="Kembali" title="Kembali">
         <i class="bi bi-arrow-left"></i>
       </a>
@@ -358,11 +401,13 @@ foreach ($st->fetchAll() as $m) {
           <strong>KPU</strong><br>DIY
         </span>
       </a>
-
     </div>
 
-    <ul class="navbar-nav-simple">
-      <li><a class="nav-link" href="login_admin.php">LOGOUT</a></li>
+    <!-- ✅ LOGOUT tampil di mobile + style sama dashboard -->
+    <ul class="navbar-nav flex-row gap-5 align-items-center">
+      <li class="nav-item">
+        <a class="nav-link nav-hover" href="login_admin.php">LOGOUT</a>
+      </li>
     </ul>
 
   </div>
@@ -388,47 +433,51 @@ foreach ($st->fetchAll() as $m) {
   <?php endif; ?>
 
   <section class="table-wrap">
-    <div class="table-head">
-      <div></div>
-      <div class="text">JUDUL MATERI</div>
-      <div class="text-center">JUMLAH SLIDE</div>
-      <div></div>
-    </div>
-
-    <?php foreach ($rows as $r): ?>
-      <?php
-        $rid = (int)$r["id"];
-        $media = $mediaByMateri[$rid] ?? [];
-        $pdfFile = $media[0] ?? "";
-      ?>
-      <div class="table-row">
-        <div class="cell-center">
-          <button class="icon-btn btn-edit"
-                  type="button"
-                  data-id="<?= $rid ?>"
-                  data-judul="<?= htmlspecialchars($r["judul"]) ?>"
-                  data-pdf="<?= htmlspecialchars($pdfFile) ?>">
-            <i class="bi bi-pencil-fill icon-edit"></i>
-          </button>
-        </div>
-
-        <div><?= htmlspecialchars($r["judul"]) ?></div>
-        <div class="cell-center"><?= (int)$r["jumlah_slide"] ?></div>
-
-        <div class="cell-center">
-          <form method="post" onsubmit="return confirm('Yakin hapus materi ini?')">
-            <input type="hidden" name="action" value="delete">
-            <input type="hidden" name="id" value="<?= $rid ?>">
-            <button class="icon-btn" type="submit" title="Hapus">
-              <i class="bi bi-trash3-fill icon-trash"></i>
-            </button>
-          </form>
-        </div>
+    <!-- ✅ wrapper scroll -->
+    <div class="table-scroll">
+      <div class="table-head table-grid">
+        <div></div>
+        <div class="text">JUDUL MATERI</div>
+        <div class="text-center">JUMLAH SLIDE</div>
+        <div></div>
       </div>
-    <?php endforeach; ?>
 
-    <div style="height:14px;background:#fff"></div>
+      <?php foreach ($rows as $r): ?>
+        <?php
+          $rid = (int)$r["id"];
+          $media = $mediaByMateri[$rid] ?? [];
+          $pdfFile = $media[0] ?? "";
+        ?>
+        <div class="table-row table-grid">
+          <div class="cell-center">
+            <button class="icon-btn btn-edit"
+                    type="button"
+                    data-id="<?= $rid ?>"
+                    data-judul="<?= htmlspecialchars($r["judul"]) ?>"
+                    data-pdf="<?= htmlspecialchars($pdfFile) ?>">
+              <i class="bi bi-pencil-fill icon-edit"></i>
+            </button>
+          </div>
+
+          <div><?= htmlspecialchars($r["judul"]) ?></div>
+          <div class="cell-center"><?= (int)$r["jumlah_slide"] ?></div>
+
+          <div class="cell-center">
+            <form method="post" onsubmit="return confirm('Yakin hapus materi ini?')">
+              <input type="hidden" name="action" value="delete">
+              <input type="hidden" name="id" value="<?= $rid ?>">
+              <button class="icon-btn" type="submit" title="Hapus">
+                <i class="bi bi-trash3-fill icon-trash"></i>
+              </button>
+            </form>
+          </div>
+        </div>
+      <?php endforeach; ?>
+
+      <div style="height:14px;background:#fff"></div>
+    </div>
   </section>
+  
 </main>
 
 <!-- MODAL -->
@@ -624,7 +673,6 @@ foreach ($st->fetchAll() as $m) {
     const buf = await file.arrayBuffer();
     const ok = await renderCoverWithPdfJsFromArrayBuffer(buf);
     if(!ok){
-      // fallback: pakai blob url
       const blobUrl = URL.createObjectURL(file);
       renderFallbackIframe(blobUrl);
     }else{
@@ -642,7 +690,6 @@ foreach ($st->fetchAll() as $m) {
     hidePreviewBox();
   }
 
-  // ===== tombol tambah =====
   btnOpenAdd.addEventListener('click', () => {
     currentAction = "add";
     modalTitle.textContent = "Materi Baru";
@@ -650,7 +697,6 @@ foreach ($st->fetchAll() as $m) {
     materiModal.show();
   });
 
-  // ===== tombol edit =====
   document.querySelectorAll('.btn-edit').forEach(btn => {
     btn.addEventListener('click', async () => {
       currentAction = "edit";
@@ -666,10 +712,8 @@ foreach ($st->fetchAll() as $m) {
         showPreviewBox(existingPdfFilename);
         const url = `${UPLOAD_URL}/${existingPdfFilename}`;
 
-        // coba pdfjs
         const ok = await renderCoverWithPdfJsFromUrl(url);
         if(!ok){
-          // fallback iframe dari url server
           renderFallbackIframe(url);
         }else{
           pdfFallback.style.display = "none";
@@ -682,7 +726,6 @@ foreach ($st->fetchAll() as $m) {
     });
   });
 
-  // ===== pilih file =====
   pdfPicker.addEventListener('change', () => {
     const f = (pdfPicker.files || [])[0];
     if(f) handlePdfSelect(f);
@@ -690,7 +733,6 @@ foreach ($st->fetchAll() as $m) {
 
   btnChangePdf.addEventListener('click', () => pdfPicker.click());
 
-  // ===== dropzone =====
   dropzone.addEventListener('click', () => pdfPicker.click());
   dropzone.addEventListener('dragover', (e) => { e.preventDefault(); dropzone.classList.add('dragover'); });
   dropzone.addEventListener('dragleave', () => dropzone.classList.remove('dragover'));
@@ -701,7 +743,6 @@ foreach ($st->fetchAll() as $m) {
     if(f) handlePdfSelect(f);
   });
 
-  // ===== submit =====
   materiForm.addEventListener("submit", (e) => {
     const hasPdf = (pdfPicker.files && pdfPicker.files.length > 0);
 
