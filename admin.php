@@ -6,7 +6,6 @@ if (empty($_SESSION["admin"])) {
   header("Location: login_admin.php");
   exit;
 }
-
 ?>
 <!doctype html>
 <html lang="id">
@@ -17,7 +16,7 @@ if (empty($_SESSION["admin"])) {
 
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet">
 
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
   <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.css" rel="stylesheet">
@@ -25,14 +24,14 @@ if (empty($_SESSION["admin"])) {
   <style>
     :root{
       --maroon:#700D09;
-      --bg:#e9edff;
-      --card-shadow:0 16px 22px rgba(0,0,0,.20);
-      --btn-shadow:0 10px 16px rgba(0,0,0,.16);
+      --bg:#E9EDFF;
+      --gold:#f4c430;
+      --title-red:#C01A1A;
     }
 
     body{
       margin:0;
-      font-family:'Inter',system-ui,-apple-system,sans-serif;
+      font-family:'Inter';
       background:var(--bg);
       min-height:100vh;
       display:flex;
@@ -41,151 +40,170 @@ if (empty($_SESSION["admin"])) {
 
     .bg-maroon{background:var(--maroon)!important}
 
-    .navbar-nav-simple{
-      list-style:none;
-      display:flex;
-      align-items:center;
-      gap:30px;
-      margin:0;
-      padding:0;
+    .navbar{
+      padding:20px 0;
+      border-bottom:1px solid #000;
     }
 
-    .navbar-nav-simple .nav-link{
-      color:#fff;
-      font-weight:700;
-      letter-spacing:.5px;
-      text-decoration:none;
+    .nav-link{
+      color:#fff !important;
+      font-weight:500;
+    }
+
+    .nav-hover{
+      position:relative;
+      padding-bottom:6px;
+    }
+
+    .nav-hover::after{
+      content:"";
+      position:absolute;
+      left:0;
+      bottom:0;
+      width:0;
+      height:3px;
+      background:var(--gold);
+      transition:0.3s ease;
+    }
+
+    .nav-hover:hover::after,
+    .nav-active::after{
+      width:100%;
     }
 
     .page{
       max-width:1200px;
       margin:0 auto;
       width:100%;
-      padding:120px 20px 16px;
+      padding:150px 20px 30px; 
       flex:1;
       display:flex;
       flex-direction:column;
-    }
-
-    .btn-back{
-      background:var(--maroon);
-      color:#fff;
-      font-weight:800;
-      font-size:18px;
-      padding:12px 34px;
-      border-radius:999px;
-      border:0;
-      box-shadow:0 10px 14px rgba(0,0,0,.18);
-      display:inline-flex;
-      align-items:center;
-      gap:20px;
-      width:max-content;
-      margin-top:20px;
-      cursor:pointer;
+      justify-content:center;
     }
 
     .title{
-      text-align:center;
-      margin:34px 0 38px;
-      font-weight:800;
-      font-size:40px;
-      color:#c61b1b;
-    }
+    text-align:center;
+    margin:10px 0 60px;
+    font-weight:900;
+    font-size:42px;
+
+    background: linear-gradient(90deg, #8B0000, #E02727, #750000);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+    color: transparent;
+  }
+
 
     .grid{
       display:grid;
-      grid-template-columns:repeat(2, 320px);
+      grid-template-columns:repeat(2, 280px);
       justify-content:center;
-      gap:90px;
-      flex:1;
+      gap:110px;
       align-content:center;
+      padding-bottom:30px;
     }
 
+    /* ===== CARD: SHADOW HANYA DI BAWAH ===== */
     .choice-card{
       background:#fff;
-      border-radius:20px;
-      height:340px;
-      box-shadow:var(--card-shadow);
+      border-radius:16px;
+      height:320px;
+      border:1px solid rgba(0,0,0,.06);
+      box-shadow:0 20px 26px -18px rgba(0,0,0,.45);
       display:flex;
       flex-direction:column;
       align-items:center;
       justify-content:center;
-      gap:44px;
+      gap:34px;
+      transition:transform .25s ease, box-shadow .25s ease;
+    }
+
+    .choice-card:hover{
+      transform:translateY(-6px);
+      box-shadow:0 26px 30px -20px rgba(0,0,0,.55);
     }
 
     .choice-icon{
-      font-size:88px;
+      font-size:78px;
       color:var(--maroon);
+      line-height:1;
+      transition:transform .25s ease;
     }
 
+    .choice-card:hover .choice-icon{
+      transform:scale(1.06);
+    }
+
+    /* ===== BUTTON TANPA SHADOW ===== */
     .choice-btn{
       background:var(--maroon);
       color:#fff;
       font-weight:800;
-      font-size:20px;
-      padding:12px 44px;
+      font-size:14px;
+      padding:10px 34px;
       border-radius:999px;
-      box-shadow:var(--btn-shadow);
       text-decoration:none;
       display:inline-block;
+      margin-top:12px;
+      transition:transform .2s ease, filter .2s ease;
     }
 
-    .footer-img{
-      width:100%;
-      height:110px;
-      object-fit:cover;
-      display:block;
-      margin-top:auto;
+    .choice-btn:hover{
+      color:#fff;
+      filter:brightness(0.92);
+      transform:translateY(2px);
+    }
+
+    .choice-btn:active{
+      transform:translateY(3px);
     }
 
     @media (max-width: 992px){
-      .grid{grid-template-columns:1fr;gap:34px}
-      .choice-card{width:min(420px,100%)}
-      .navbar-nav-simple{display:none}
+      .grid{grid-template-columns:1fr;gap:26px}
+      .choice-card{width:min(420px,100%); margin:0 auto;}
+      .title{font-size:36px; margin-bottom:34px;}
+      .page{padding-top:120px;}
     }
   </style>
 </head>
 <body>
 
-<nav class="navbar navbar-dark bg-maroon fixed-top" style="padding:20px 0;">
+<nav class="navbar navbar-dark bg-maroon fixed-top">
   <div class="container d-flex justify-content-between align-items-center">
-    <a class="navbar-brand d-flex align-items-center gap-2" href="#">
-      <img src="Asset/LogoKPU.png" width="40" height="40" alt="Logo KPU">
-      <span><strong>KPU</strong><br>DIY</span>
+    <a class="navbar-brand d-flex align-items-center gap-2" href="dashboard.php">
+      <img src="Asset/LogoKPU.png" height="40" alt="KPU">
+      <span class="lh-sm text-white fs-6">
+        <strong>KPU</strong><br>DIY
+      </span>
     </a>
 
-    <ul class="navbar-nav-simple">
-      <li><a class="nav-link" href="tambah_materi_admin.php">MATERI</a></li>
-      <li><a class="nav-link" href="kuis_admin.php">KUIS</a></li>
-      <li><a class="nav-link" href="kontak.php">KONTAK</a></li>
-      <li><a class="nav-link" href="login_admin.php">LOGIN</a></li>
+    <ul class="navbar-nav flex-row gap-5 align-items-center">
+      <li class="nav-item"><a class="nav-link nav-hover" href="login_admin.php">LOGOUT</a></li>
     </ul>
   </div>
 </nav>
 
 <main class="page">
-  <button class="btn-back" type="button" onclick="history.back()">
-    <i class="bi bi-arrow-left"></i>
-    Kembali
-  </button>
-
   <h1 class="title">Halo, Ingin Menambahkan Apa Hari Ini?</h1>
 
   <section class="grid">
     <div class="choice-card">
-      <i class="bi bi-folder-fill choice-icon"></i>
-      <a class="choice-btn" href="tambah_materi.php">Tambah Materi</a>
+      <i class="bi bi-clipboard-check choice-icon"></i>
+      <a class="choice-btn" href="tambah_materi_admin.php">Tambah Materi</a>
     </div>
 
     <div class="choice-card">
-      <i class="bi bi-pencil-fill choice-icon"></i>
-      <a class="choice-btn" href="kuis_admin.php">Tambah Kuis</a>
+      <i class="bi bi-card-checklist choice-icon"></i>
+      <a class="choice-btn" href="kuis_admin.php">Tambah Soal</a>
     </div>
   </section>
 </main>
 
-<img src="Asset/Footer.png" class="footer-img" alt="Footer">
-
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+
+<?php include 'footer.php'; ?>
+
 </body>
 </html>
