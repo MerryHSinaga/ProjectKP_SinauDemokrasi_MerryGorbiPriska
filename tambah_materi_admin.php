@@ -30,9 +30,6 @@ function db(): PDO {
   return $pdo;
 }
 
-/* =======================
-   BAGIAN OPTIONS
-======================= */
 $BAGIAN_OPTIONS = [
   'Keuangan',
   'Umum dan Logistik',
@@ -43,9 +40,6 @@ $BAGIAN_OPTIONS = [
 ];
 $DEFAULT_BAGIAN = 'Umum dan Logistik';
 
-/* =======================
-   MIGRATION: tambah kolom bagian di tabel materi (jika belum ada)
-======================= */
 try {
   db()->exec("
     ALTER TABLE materi
@@ -60,7 +54,6 @@ try {
     AFTER judul
   ");
 } catch (Throwable $e) {
-  // kolom sudah ada -> abaikan
 }
 
 function safe_name(string $ext): string {
@@ -290,7 +283,6 @@ foreach ($st->fetchAll() as $m) {
       -webkit-overflow-scrolling:touch;
     }
 
-    /* ✅ sekarang ada kolom BAGIAN */
     .table-grid{
       min-width:980px;
     }
@@ -323,7 +315,6 @@ foreach ($st->fetchAll() as $m) {
     .icon-btn:hover{background:rgba(112,13,9,.08);transform:translateY(-1px);}
     .icon-edit,.icon-trash{color:var(--maroon);font-size:22px;}
 
-    /* ===== MODAL ===== */
     .label-plain{font-weight:600;font-size:14px;color:#111;margin-bottom:8px;}
     .input-pill{
       border:2px solid #111;border-radius:999px;
@@ -740,7 +731,7 @@ foreach ($st->fetchAll() as $m) {
 
   function resetModal(){
     judulInput.value = "";
-    bagianInput.selectedIndex = 0; // default ke opsi pertama di HTML (sudah diset selected di PHP)
+    bagianInput.selectedIndex = 0; 
     actionInput.value = "add";
     idInput.value = "";
     pdfPicker.value = "";
@@ -820,7 +811,6 @@ foreach ($st->fetchAll() as $m) {
       }
     }
 
-    // validasi bagian (minimal tidak kosong)
     if(!bagianInput.value){
       e.preventDefault();
       alert("Bagian wajib dipilih.");
