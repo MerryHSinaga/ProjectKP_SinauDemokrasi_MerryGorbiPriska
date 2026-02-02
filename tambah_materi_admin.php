@@ -30,6 +30,39 @@ function db(): PDO {
   return $pdo;
 }
 
+/* =======================
+   BAGIAN OPTIONS
+======================= */
+$BAGIAN_OPTIONS = [
+  'Keuangan',
+  'Umum dan Logistik',
+  'Teknis Penyelenggara Pemilu, Partisipasi Hubungan Masyarakat',
+  'Hukum dan SDM',
+  'Perencanaan',
+  'Data dan Informasi'
+];
+$DEFAULT_BAGIAN = 'Umum dan Logistik';
+
+/* =======================
+   MIGRATION: tambah kolom bagian di tabel materi (jika belum ada)
+======================= */
+try {
+  db()->exec("
+    ALTER TABLE materi
+    ADD COLUMN bagian ENUM(
+      'Keuangan',
+      'Umum dan Logistik',
+      'Teknis Penyelenggara Pemilu, Partisipasi Hubungan Masyarakat',
+      'Hukum dan SDM',
+      'Perencanaan',
+      'Data dan Informasi'
+    ) NOT NULL DEFAULT 'Umum dan Logistik'
+    AFTER judul
+  ");
+} catch (Throwable $e) {
+  // kolom sudah ada -> abaikan
+}
+
 function safe_name(string $ext): string {
   $ext = strtolower($ext);
   return "materi_" . date("Ymd_His") . "_" . bin2hex(random_bytes(6)) . "." . $ext;
@@ -87,17 +120,23 @@ try {
     $lastAction = $action;
 
     if ($action === "add" || $action === "edit") {
-      $judul = trim((string)($_POST["judul"] ?? ""));
-      $mode  = (string)($_POST["mode"] ?? "pdf");
+      $judul  = trim((string)($_POST["judul"] ?? ""));
+      $bagian = trim((string)($_POST["bagian"] ?? ""));
+      $mode   = (string)($_POST["mode"] ?? "pdf");
 
       if ($judul === "") throw new RuntimeException("Judul wajib diisi.");
       if ($mode !== "pdf") throw new RuntimeException("Materi hanya boleh dalam bentuk PDF.");
 
+      // validasi bagian
+      if ($bagian === "" || !in_array($bagian, $BAGIAN_OPTIONS, true)) {
+        $bagian = $DEFAULT_BAGIAN;
+      }
+
       db()->beginTransaction();
 
       if ($action === "add") {
-        db()->prepare("INSERT INTO materi (judul, tipe, jumlah_slide) VALUES (?, 'pdf', 0)")
-          ->execute([$judul]);
+        db()->prepare("INSERT INTO materi (judul, bagian, tipe, jumlah_slide) VALUES (?, ?, 'pdf', 0)")
+          ->execute([$judul, $bagian]);
         $materiId = (int)db()->lastInsertId();
       } else {
         $materiId = (int)($_POST["id"] ?? 0);
@@ -109,8 +148,8 @@ try {
         if (!$row) throw new RuntimeException("Materi tidak ditemukan.");
         if ((string)$row["tipe"] !== "pdf") throw new RuntimeException("Tipe materi tidak valid di database.");
 
-        db()->prepare("UPDATE materi SET judul=? WHERE id=?")
-          ->execute([$judul, $materiId]);
+        db()->prepare("UPDATE materi SET judul=?, bagian=? WHERE id=?")
+          ->execute([$judul, $bagian, $materiId]);
       }
 
       $hasNewPdf = isset($_FILES["pdf"]) && ($_FILES["pdf"]["error"] ?? UPLOAD_ERR_NO_FILE) === UPLOAD_ERR_OK;
@@ -203,7 +242,6 @@ foreach ($st->fetchAll() as $m) {
     .bg-maroon{background:var(--maroon)!important}
     .navbar{padding:20px 0;border-bottom:1px solid rgba(0,0,0,.15);}
 
-    /* ✅ LOGOUT STYLE (SAMA SEPERTI DASHBOARD) */
     .nav-link{color:#fff !important;font-weight:500;}
     .nav-hover{position:relative;padding-bottom:6px;}
     .nav-hover::after{
@@ -247,24 +285,33 @@ foreach ($st->fetchAll() as $m) {
       box-shadow:var(--shadow);max-width:980px;margin-left:auto;margin-right:auto;
     }
 
-    /* ✅ BARU: tabel bisa discroll horizontal di mobile */
     .table-scroll{
       overflow-x:auto;
       -webkit-overflow-scrolling:touch;
     }
+
+    /* ✅ sekarang ada kolom BAGIAN */
     .table-grid{
-      min-width:860px;
+      min-width:980px;
     }
 
     .table-head{
-      background:var(--header-gray);padding:18px 34px;
-      display:grid;grid-template-columns:90px 1fr 220px 90px;align-items:center;
+      background:var(--header-gray);
+      padding:18px 34px;
+      display:grid;
+      grid-template-columns:90px 1fr 320px 180px 90px;
+      align-items:center;
       font-weight:900;font-size:20px;color:#111;
     }
     .table-row{
-      padding:18px 34px;display:grid;grid-template-columns:90px 1fr 220px 90px;
-      align-items:center;border-top:1px solid var(--row-line);font-size:16px;color:#111;
+      padding:18px 34px;
+      display:grid;
+      grid-template-columns:90px 1fr 320px 180px 90px;
+      align-items:center;
+      border-top:1px solid var(--row-line);
+      font-size:16px;color:#111;
     }
+
     .cell-center{text-align:center;}
 
     .icon-btn{
@@ -281,6 +328,12 @@ foreach ($st->fetchAll() as $m) {
     .input-pill{
       border:2px solid #111;border-radius:999px;
       padding:10px 18px;font-size:13px;outline:none;width:min(520px,100%);
+      background:#fff;
+    }
+    select.input-pill{
+      appearance:auto;
+      -webkit-appearance:auto;
+      -moz-appearance:auto;
     }
 
     .modal-dialog{ max-width:680px; }
@@ -353,14 +406,12 @@ foreach ($st->fetchAll() as $m) {
     .btn-back:hover{filter:brightness(1.05);transform:translateY(-1px);}
     .btn-back i{font-size:22px;line-height:1;}
 
-    /* ✅ tablet */
     @media (max-width: 992px){
       .title{font-size:40px;}
       .table-wrap{max-width:100%;}
       .page{padding:120px 16px 30px;}
     }
 
-    /* ✅ mobile: font kecil + tabel geser kanan */
     @media (max-width: 576px){
       body{font-size:13px;}
       .title{font-size:32px;}
@@ -381,7 +432,7 @@ foreach ($st->fetchAll() as $m) {
       .dropzone .dz-icon{font-size:40px;}
       .dropzone .dz-text{font-size:12px;}
 
-      .table-grid{min-width:760px;}
+      .table-grid{min-width:980px;}
     }
   </style>
 </head>
@@ -403,7 +454,6 @@ foreach ($st->fetchAll() as $m) {
       </a>
     </div>
 
-    <!-- ✅ LOGOUT tampil di mobile + style sama dashboard -->
     <ul class="navbar-nav flex-row gap-5 align-items-center">
       <li class="nav-item">
         <a class="nav-link nav-hover" href="login_admin.php">LOGOUT</a>
@@ -417,7 +467,7 @@ foreach ($st->fetchAll() as $m) {
   <div class="d-flex justify-content-between align-items-start flex-wrap gap-3" style="max-width:980px;margin:0 auto;">
     <div>
       <h1 class="title">Daftar Materi</h1>
-      <div class="subtitle">Klik tombol edit untuk memperbarui file atau judul materi.</div>
+      <div class="subtitle">Klik tombol edit untuk memperbarui file, judul, atau bagian materi.</div>
     </div>
 
     <button class="btn-add" type="button" id="btnOpenAdd">
@@ -433,11 +483,11 @@ foreach ($st->fetchAll() as $m) {
   <?php endif; ?>
 
   <section class="table-wrap">
-    <!-- ✅ wrapper scroll -->
     <div class="table-scroll">
       <div class="table-head table-grid">
         <div></div>
         <div class="text">JUDUL MATERI</div>
+        <div class="text">BAGIAN</div>
         <div class="text-center">JUMLAH SLIDE</div>
         <div></div>
       </div>
@@ -447,19 +497,22 @@ foreach ($st->fetchAll() as $m) {
           $rid = (int)$r["id"];
           $media = $mediaByMateri[$rid] ?? [];
           $pdfFile = $media[0] ?? "";
+          $bagian = (string)($r["bagian"] ?? $DEFAULT_BAGIAN);
         ?>
         <div class="table-row table-grid">
           <div class="cell-center">
             <button class="icon-btn btn-edit"
                     type="button"
                     data-id="<?= $rid ?>"
-                    data-judul="<?= htmlspecialchars($r["judul"]) ?>"
+                    data-judul="<?= htmlspecialchars((string)$r["judul"]) ?>"
+                    data-bagian="<?= htmlspecialchars($bagian) ?>"
                     data-pdf="<?= htmlspecialchars($pdfFile) ?>">
               <i class="bi bi-pencil-fill icon-edit"></i>
             </button>
           </div>
 
-          <div><?= htmlspecialchars($r["judul"]) ?></div>
+          <div><?= htmlspecialchars((string)$r["judul"]) ?></div>
+          <div><?= htmlspecialchars($bagian) ?></div>
           <div class="cell-center"><?= (int)$r["jumlah_slide"] ?></div>
 
           <div class="cell-center">
@@ -477,7 +530,7 @@ foreach ($st->fetchAll() as $m) {
       <div style="height:14px;background:#fff"></div>
     </div>
   </section>
-  
+
 </main>
 
 <!-- MODAL -->
@@ -497,6 +550,15 @@ foreach ($st->fetchAll() as $m) {
 
         <div class="label-plain">Judul Materi</div>
         <input class="input-pill" name="judul" id="judulInput" type="text" placeholder="Tuliskan judul materi di sini..." required>
+
+        <div class="label-plain mt-3">Bagian</div>
+        <select class="input-pill" name="bagian" id="bagianInput" required>
+          <?php foreach ($BAGIAN_OPTIONS as $opt): ?>
+            <option value="<?= htmlspecialchars($opt) ?>" <?= $opt === $DEFAULT_BAGIAN ? "selected" : "" ?>>
+              <?= htmlspecialchars($opt) ?>
+            </option>
+          <?php endforeach; ?>
+        </select>
 
         <div class="mt-3" style="font-weight:800;font-size:14px;">Input Materi</div>
         <div style="font-style:italic;font-size:12px;">(PDF) max. 500Kb</div>
@@ -533,22 +595,20 @@ foreach ($st->fetchAll() as $m) {
   </div>
 </div>
 
-<!-- penting: bootstrap bundle dulu -->
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
-<!-- pdfjs optional (kalau gagal load, modal tetap jalan) -->
 <script src="https://cdn.jsdelivr.net/npm/pdfjs-dist@4.10.38/build/pdf.min.js"></script>
 
 <script>
 (function(){
   const UPLOAD_URL = <?= json_encode($UPLOAD_URL) ?>;
 
-  // ===== ambil elemen =====
   const materiModalEl = document.getElementById('materiModal');
   const btnOpenAdd = document.getElementById('btnOpenAdd');
   const modalTitle = document.getElementById('modalTitle');
   const actionInput = document.getElementById('actionInput');
   const idInput = document.getElementById('idInput');
   const judulInput = document.getElementById('judulInput');
+  const bagianInput = document.getElementById('bagianInput');
 
   const pdfPicker = document.getElementById('pdfPicker');
   const dropzone = document.getElementById('dropzone');
@@ -562,11 +622,9 @@ foreach ($st->fetchAll() as $m) {
 
   const materiForm = document.getElementById('materiForm');
 
-  // ===== bootstrap modal =====
   const materiModal = new bootstrap.Modal(materiModalEl, { backdrop: true, keyboard: true });
 
   let currentAction = "add";
-  let pickedPdfFile = null;
   let existingPdfFilename = "";
 
   function setFileToInput(file){
@@ -595,7 +653,6 @@ foreach ($st->fetchAll() as $m) {
   function hidePreviewBox(){
     pdfPreviewBox.style.display = "none";
     pdfName.textContent = "";
-    pickedPdfFile = null;
     existingPdfFilename = "";
     clearCanvas();
     pdfFallback.style.display = "none";
@@ -665,7 +722,6 @@ foreach ($st->fetchAll() as $m) {
     const msg = validatePdfFile(file);
     if(msg){ alert(msg); return; }
 
-    pickedPdfFile = file;
     setFileToInput(file);
 
     showPreviewBox(file.name);
@@ -684,6 +740,7 @@ foreach ($st->fetchAll() as $m) {
 
   function resetModal(){
     judulInput.value = "";
+    bagianInput.selectedIndex = 0; // default ke opsi pertama di HTML (sudah diset selected di PHP)
     actionInput.value = "add";
     idInput.value = "";
     pdfPicker.value = "";
@@ -706,8 +763,10 @@ foreach ($st->fetchAll() as $m) {
       actionInput.value = "edit";
       idInput.value = btn.dataset.id || "";
       judulInput.value = btn.dataset.judul || "";
-      existingPdfFilename = btn.dataset.pdf || "";
+      const bagian = btn.dataset.bagian || "";
+      if (bagian) bagianInput.value = bagian;
 
+      existingPdfFilename = btn.dataset.pdf || "";
       if(existingPdfFilename){
         showPreviewBox(existingPdfFilename);
         const url = `${UPLOAD_URL}/${existingPdfFilename}`;
@@ -759,6 +818,13 @@ foreach ($st->fetchAll() as $m) {
         alert(msg);
         return;
       }
+    }
+
+    // validasi bagian (minimal tidak kosong)
+    if(!bagianInput.value){
+      e.preventDefault();
+      alert("Bagian wajib dipilih.");
+      return;
     }
   });
 
