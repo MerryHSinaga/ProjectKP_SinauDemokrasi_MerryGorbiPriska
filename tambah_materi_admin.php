@@ -9,6 +9,17 @@ if (empty($_SESSION["admin"])) {
 
 require_once 'db.php';
 
+if (!isset($UPLOAD_DIR) || !is_string($UPLOAD_DIR) || trim($UPLOAD_DIR) === "") {
+  $UPLOAD_DIR = __DIR__ . "/uploads";
+}
+$UPLOAD_DIR = rtrim($UPLOAD_DIR, "/");
+
+if (!is_dir($UPLOAD_DIR)) {
+  @mkdir($UPLOAD_DIR, 0775, true);
+}
+if (!is_dir($UPLOAD_DIR) || !is_writable($UPLOAD_DIR)) {
+}
+
 $BAGIAN_OPTIONS = [
   'Keuangan',
   'Umum dan Logistik',
@@ -65,6 +76,27 @@ function validate_judul_or_throw(string $judul): void {
   }
 }
 
+function upload_error_to_message(int $code): string {
+  return match ($code) {
+    UPLOAD_ERR_OK => "",
+    UPLOAD_ERR_INI_SIZE, UPLOAD_ERR_FORM_SIZE => "Ukuran file terlalu besar (maks 500KB).",
+    UPLOAD_ERR_PARTIAL => "Upload gagal (file terunggah sebagian).",
+    UPLOAD_ERR_NO_FILE => "Silakan pilih file PDF.",
+    UPLOAD_ERR_NO_TMP_DIR => "Upload gagal (folder sementara tidak tersedia).",
+    UPLOAD_ERR_CANT_WRITE => "Upload gagal (gagal menyimpan file).",
+    UPLOAD_ERR_EXTENSION => "Upload gagal (diblokir ekstensi oleh server).",
+    default => "Upload gagal.",
+  };
+}
+
+function is_pdf_signature(string $tmpPath): bool {
+  $fh = @fopen($tmpPath, 'rb');
+  if (!$fh) return false;
+  $head = (string)@fread($fh, 5);
+  @fclose($fh);
+  return str_starts_with($head, "%PDF-");
+}
+
 function friendly_error_message(string $msg): ?string {
   $allowed = [
     "Judul wajib diisi.",
@@ -74,37 +106,68 @@ function friendly_error_message(string $msg): ?string {
     "Silakan pilih file PDF.",
     "File wajib diupload.",
     "Upload gagal.",
+    "Upload gagal (file terunggah sebagian).",
+    "Upload gagal (folder sementara tidak tersedia).",
+    "Upload gagal (gagal menyimpan file).",
+    "Upload gagal (diblokir ekstensi oleh server).",
     "Ukuran file terlalu besar (maks 500KB).",
     "Tipe file tidak sesuai (wajib PDF).",
     "File tidak valid (bukan PDF).",
     "Gagal menyimpan file.",
     "ID tidak valid.",
-    "Materi tidak ditemukan."
+    "Materi tidak ditemukan.",
+    "Wajib upload file PDF.",
   ];
 
   if (in_array($msg, $allowed, true)) return $msg;
-
   if (stripos($msg, "SQLSTATE") !== false) return null;
-
   return null;
 }
 
 function upload_one_pdf(array $file, int $maxBytes, string $destDir): array {
-  if (!isset($file["tmp_name"]) || !is_uploaded_file($file["tmp_name"])) return [false,"","File wajib diupload."];
-  if (($file["error"] ?? UPLOAD_ERR_OK) !== UPLOAD_ERR_OK) return [false,"","Upload gagal."];
-  if (($file["size"] ?? 0) > $maxBytes) return [false,"","Ukuran file terlalu besar (maks 500KB)."];
+  if (!isset($file["tmp_name"]) || !is_uploaded_file($file["tmp_name"])) {
+    return [false,"","File wajib diupload."];
+  }
+
+  $errCode = (int)($file["error"] ?? UPLOAD_ERR_OK);
+  if ($errCode !== UPLOAD_ERR_OK) {
+    $msg = upload_error_to_message($errCode);
+    return [false,"", $msg !== "" ? $msg : "Upload gagal."];
+  }
+
+  if ((int)($file["size"] ?? 0) > $maxBytes) {
+    return [false,"","Ukuran file terlalu besar (maks 500KB)."];
+  }
 
   $ext = strtolower(pathinfo((string)($file["name"] ?? ""), PATHINFO_EXTENSION));
   if ($ext !== "pdf") return [false,"","Tipe file tidak sesuai (wajib PDF)."];
 
-  $finfo = new finfo(FILEINFO_MIME_TYPE);
-  $mime = $finfo->file($file["tmp_name"]);
-  if (!in_array($mime, ["application/pdf","application/x-pdf"], true)) return [false,"","File tidak valid (bukan PDF)."];
+  $mime = "";
+  try {
+    $finfo = new finfo(FILEINFO_MIME_TYPE);
+    $mime = (string)$finfo->file((string)$file["tmp_name"]);
+  } catch (Throwable $e) {
+    $mime = "";
+  }
+
+  $allowedMimes = [
+    "application/pdf",
+    "application/x-pdf",
+    "application/octet-stream",
+  ];
+
+  if (!is_pdf_signature((string)$file["tmp_name"])) {
+    return [false,"","File tidak valid (bukan PDF)."];
+  }
+
+  if ($mime !== "" && !in_array($mime, $allowedMimes, true)) {
+    return [false,"","File tidak valid (bukan PDF)."];
+  }
 
   $name = safe_name("pdf");
   $path = rtrim($destDir,"/") . "/" . $name;
 
-  if (!move_uploaded_file($file["tmp_name"], $path)) return [false,"","Gagal menyimpan file."];
+  if (!move_uploaded_file((string)$file["tmp_name"], $path)) return [false,"","Gagal menyimpan file."];
   return [true,$name,""];
 }
 
@@ -141,8 +204,8 @@ try {
 
       if ($mode !== "pdf") throw new RuntimeException("Materi hanya boleh dalam bentuk PDF.");
 
-      if ($bagian === "" || !in_array($bagian, $BAGIAN_OPTIONS, true)) {
-        $bagian = $DEFAULT_BAGIAN;
+      if ($bagian === "" || !in_array($bagian, $GLOBALS['BAGIAN_OPTIONS'], true)) {
+        $bagian = $GLOBALS['DEFAULT_BAGIAN'];
       }
 
       db()->beginTransaction();
@@ -165,12 +228,12 @@ try {
           ->execute([$judul, $bagian, $materiId]);
       }
 
-      $hasNewPdf = isset($_FILES["pdf"]) && ($_FILES["pdf"]["error"] ?? UPLOAD_ERR_NO_FILE) === UPLOAD_ERR_OK;
+      $hasNewPdf = isset($_FILES["pdf"]) && ((int)($_FILES["pdf"]["error"] ?? UPLOAD_ERR_NO_FILE) !== UPLOAD_ERR_NO_FILE);
       $shouldReplaceMedia = ($action === "add") || $hasNewPdf;
 
       if ($shouldReplaceMedia) {
         if (!$hasNewPdf) throw new RuntimeException("Silakan pilih file PDF.");
-        
+
         remove_media_files($materiId);
 
         [$ok,$fn,$err] = upload_one_pdf($_FILES["pdf"] ?? [], 500*1024, $UPLOAD_DIR);
@@ -410,11 +473,30 @@ foreach ($st->fetchAll() as $m) {
     .btn-back:hover{filter:brightness(1.05);transform:translateY(-1px);}
     .btn-back i{font-size:22px;line-height:1;}
 
-    @media (max-width: 992px){
-      .title{font-size:40px;}
-      .table-wrap{max-width:100%;}
-      .page{padding:120px 16px 30px;}
+    .pdf-edit-row{
+      display:flex;
+      align-items:center;
+      justify-content:flex-end;
+      gap:12px;
+      margin-top:12px;
     }
+    .btn-edit-pdf{
+      border:0;
+      background:var(--maroon);
+      color:#fff;
+      font-weight:800;
+      font-size:12px;
+      padding:10px 14px;
+      border-radius:999px;
+      display:inline-flex;
+      align-items:center;
+      gap:8px;
+      white-space:nowrap;
+      box-shadow:0 10px 18px rgba(0,0,0,.15);
+      transition:transform .15s ease, filter .15s ease;
+    }
+    .btn-edit-pdf:hover{filter:brightness(.95);transform:translateY(1px);}
+    .btn-edit-pdf:active{transform:translateY(2px);}
 
     @media (max-width: 576px){
       body{font-size:13px;}
@@ -572,15 +654,38 @@ foreach ($st->fetchAll() as $m) {
           <?php endforeach; ?>
         </select>
 
-        <div class="mt-3" style="font-weight:800;font-size:14px;">Input Materi</div>
-        <div style="font-style:italic;font-size:12px;">(PDF) max. 500Kb</div>
+        <div id="inputMateriMeta">
+          <div class="mt-3" style="font-weight:800;font-size:14px;">Input Materi</div>
+          <div style="font-style:italic;font-size:12px;">(PDF) max. 500Kb</div>
+        </div>
 
         <input id="pdfPicker" name="pdf" type="file" accept="application/pdf" class="d-none">
+
+        <div class="pdf-edit-row" id="pdfEditRow" style="display:none;">
+          <button type="button" class="btn-edit-pdf" id="btnEditPdf">
+            <i class="bi bi-pencil-square"></i>
+            <span>Edit PDF</span>
+          </button>
+        </div>
 
         <div class="dropzone" id="dropzone">
           <div>
             <div class="dz-icon"><i class="bi bi-file-earmark-pdf"></i></div>
             <div class="dz-text" id="dzText">Klik atau seret file PDF ke sini</div>
+          </div>
+        </div>
+
+        <div class="mt-3" id="pdfPreviewWrap" style="display:none;">
+          <div style="font-weight:800;font-size:14px;">Preview PDF</div>
+          <div style="font-style:italic;font-size:12px;">(tampilan cepat untuk admin)</div>
+
+          <div style="margin-top:10px;border:1px solid #e6e6e6;border-radius:16px;overflow:hidden;">
+            <iframe
+              id="pdfPreviewFrame"
+              src=""
+              style="width:100%;height:420px;border:0;background:#fff;"
+              title="Preview PDF"
+            ></iframe>
           </div>
         </div>
 
@@ -604,14 +709,25 @@ foreach ($st->fetchAll() as $m) {
   const judulInput = document.getElementById('judulInput');
   const bagianInput = document.getElementById('bagianInput');
 
+  const inputMateriMeta = document.getElementById('inputMateriMeta');
+
   const pdfPicker = document.getElementById('pdfPicker');
   const dropzone = document.getElementById('dropzone');
   const dzText = document.getElementById('dzText');
+
+  const pdfPreviewWrap = document.getElementById('pdfPreviewWrap');
+  const pdfPreviewFrame = document.getElementById('pdfPreviewFrame');
+
+  const pdfEditRow = document.getElementById('pdfEditRow');
+  const btnEditPdf = document.getElementById('btnEditPdf');
+
+  const UPLOADS_PUBLIC_BASE = "uploads";
 
   const materiForm = document.getElementById('materiForm');
   const materiModal = new bootstrap.Modal(materiModalEl, { backdrop: true, keyboard: true });
 
   let currentAction = "add";
+  let objectUrl = null;
 
   function setFileToInput(file){
     const dt = new DataTransfer();
@@ -619,9 +735,31 @@ foreach ($st->fetchAll() as $m) {
     pdfPicker.files = dt.files;
   }
 
+  function clearPreview(){
+    if (objectUrl) {
+      URL.revokeObjectURL(objectUrl);
+      objectUrl = null;
+    }
+    pdfPreviewFrame.src = "";
+    pdfPreviewWrap.style.display = "none";
+  }
+
+  function showPreview(url){
+    pdfPreviewFrame.src = url;
+    pdfPreviewWrap.style.display = "block";
+  }
+
   function validatePdfFile(file){
     if(!file) return "File tidak ditemukan.";
-    if(file.type !== "application/pdf") return "Tipe file harus PDF.";
+
+    const name = (file.name || "").toLowerCase();
+    const nameOk = name.endsWith(".pdf");
+
+    const allowedTypes = ["application/pdf","application/x-pdf","application/octet-stream"];
+    const type = (file.type || "").toLowerCase();
+    const typeOk = (type === "" || allowedTypes.includes(type));
+
+    if(!nameOk && !typeOk) return "Tipe file harus PDF.";
     if(file.size > 500 * 1024) return "Ukuran file terlalu besar (maks 500KB).";
     return "";
   }
@@ -639,19 +777,39 @@ foreach ($st->fetchAll() as $m) {
     return "";
   }
 
+  function setModeAdd(){
+   
+    dropzone.style.display = "flex";
+    pdfEditRow.style.display = "none";
+    if (inputMateriMeta) inputMateriMeta.style.display = "block";
+    dzText.textContent = "Klik atau seret file PDF ke sini";
+  }
+
+  function setModeEdit(){
+    dropzone.style.display = "none";
+    pdfEditRow.style.display = "flex";
+    if (inputMateriMeta) inputMateriMeta.style.display = "none";
+  }
+
   function resetModal(){
     judulInput.value = "";
     bagianInput.selectedIndex = 0;
     actionInput.value = "add";
     idInput.value = "";
     pdfPicker.value = "";
-    dzText.textContent = "Klik atau seret file PDF ke sini";
+    clearPreview();
+    setModeAdd();
   }
+
+  btnEditPdf.addEventListener('click', () => {
+    pdfPicker.click();
+  });
 
   btnOpenAdd.addEventListener('click', () => {
     currentAction = "add";
     modalTitle.textContent = "Materi Baru";
     resetModal();
+    setModeAdd();
     materiModal.show();
   });
 
@@ -669,9 +827,14 @@ foreach ($st->fetchAll() as $m) {
       if (bagian) bagianInput.value = bagian;
 
       const existingPdf = btn.dataset.pdf || "";
-      dzText.textContent = existingPdf
-        ? `PDF saat ini: ${existingPdf} (klik untuk ganti jika perlu)`
-        : "Klik untuk pilih PDF (wajib jika belum ada)";
+      setModeEdit();
+
+      if (existingPdf) {
+        const url = `${UPLOADS_PUBLIC_BASE}/${encodeURIComponent(existingPdf)}?v=${Date.now()}`;
+        showPreview(url);
+      } else {
+        clearPreview();
+      }
 
       materiModal.show();
     });
@@ -681,7 +844,14 @@ foreach ($st->fetchAll() as $m) {
     const msg = validatePdfFile(file);
     if(msg){ alert(msg); return; }
     setFileToInput(file);
-    dzText.textContent = `File dipilih: ${file.name}`;
+
+    if (currentAction === "add") {
+      dzText.textContent = `File dipilih: ${file.name}`;
+    }
+    
+    if (objectUrl) URL.revokeObjectURL(objectUrl);
+    objectUrl = URL.createObjectURL(file);
+    showPreview(objectUrl);
   }
 
   pdfPicker.addEventListener('change', () => {
@@ -740,6 +910,11 @@ foreach ($st->fetchAll() as $m) {
       return;
     }
   });
+
+  materiModalEl.addEventListener('hidden.bs.modal', () => {
+    clearPreview();
+  });
+
 })();
 </script>
 
