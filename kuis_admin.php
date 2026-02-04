@@ -49,11 +49,10 @@ function judul_ellipsis(string $text, int $max = 40): string {
   return mb_substr($text, 0, $max, "UTF-8") . "...";
 }
 
-
 function friendly_error_message(string $msg): string {
   $m = trim($msg);
-
   $lower = strtolower($m);
+
   if (
     str_contains($lower, "sqlstate") ||
     str_contains($lower, "pdo") ||
@@ -125,7 +124,6 @@ function paket_create(string $judul, string $mode, ?string $bagian): int {
   $bagian = validate_bagian($bagian);
 
   if (!in_array($mode, ["csv","manual"], true)) $mode = "csv";
-
   if ($bagian === null) throw new RuntimeException("Bagian wajib dipilih.");
 
   $st = db()->prepare("INSERT INTO kuis_paket (judul, input_mode, bagian) VALUES (?, ?, ?)");
@@ -543,17 +541,6 @@ $paket = db()->query("
     .icon-btn:hover{background:rgba(112,13,9,.08);transform:translateY(-1px);}
     .icon-edit,.icon-trash{color:var(--maroon);font-size:22px;}
 
-    .mode-badge{
-      display:inline-flex;align-items:center;gap:8px;
-      font-size:12px;font-weight:900;
-      padding:6px 12px;border-radius:999px;
-      border:2px solid rgba(112,13,9,.25);
-      background:#fff;
-      color:#111;
-      margin-left:10px;
-      white-space:nowrap;
-    }
-
     .modal-content{border:0;border-radius:28px;overflow:hidden;box-shadow:0 30px 60px rgba(0,0,0,.28);}
     .modal-header-custom{background:var(--maroon);padding:22px 28px 16px;position:relative;}
     .modal-title-custom{margin:0;color:#fff;font-weight:900;font-size:34px;line-height:1.05;}
@@ -578,7 +565,7 @@ $paket = db()->query("
       -webkit-appearance: none;
       -moz-appearance: none;
       background-color:#fff;
-      padding-right:42px; 
+      padding-right:42px;
       line-height: 1.2;
     }
 
@@ -652,6 +639,8 @@ $paket = db()->query("
     .btn-back:hover{filter:brightness(1.05);transform:translateY(-1px);}
     .btn-back i{font-size:22px;line-height:1;}
 
+    .col-bagian{padding-left:0.5cm;}
+
     @media (max-width: 576px){
       body{font-size:13px;}
       .title{font-size:32px;}
@@ -661,7 +650,6 @@ $paket = db()->query("
       .table-row{font-size:14px;padding:14px 16px;}
       .icon-btn{width:40px;height:40px;}
       .icon-edit,.icon-trash{font-size:20px;}
-      .mode-badge{font-size:11px;padding:5px 10px;}
       .modal-header-custom{padding:18px 18px 14px;}
       .modal-title-custom{font-size:22px;}
       .modal-subtitle-custom{font-size:12px;}
@@ -730,8 +718,8 @@ $paket = db()->query("
     <div class="table-scroll">
       <div class="table-head table-grid">
         <div></div>
-        <div class="text">PAKET SOAL</div>
-        <div class="text">BAGIAN</div>
+        <div class="text">JUDUL MATERI</div>
+        <div class="text col-bagian">BAGIAN</div>
         <div class="text-center">JUMLAH SOAL</div>
         <div></div>
       </div>
@@ -753,15 +741,11 @@ $paket = db()->query("
             </button>
           </div>
 
-          <div title="<?= htmlspecialchars($judulFull) ?>" style="display:flex;flex-direction:column;align-items:flex-start;">
-            <div><?= htmlspecialchars($judulShow) ?></div>
-            <div style="margin-top:6px;">
-              <span class="mode-badge" style="margin-left:0;"><?= strtoupper((string)$p["input_mode"]) ?></span>
-            </div>
+          <div title="<?= htmlspecialchars($judulFull) ?>">
+            <?= htmlspecialchars($judulShow) ?>
           </div>
 
-
-          <div title="<?= htmlspecialchars($bagianVal) ?>">
+          <div class="col-bagian" title="<?= htmlspecialchars($bagianVal) ?>">
             <?= htmlspecialchars($bagianVal !== "" ? $bagianVal : "-") ?>
           </div>
 
@@ -802,11 +786,9 @@ $paket = db()->query("
         <div class="d-flex justify-content-between align-items-center gap-3 flex-wrap">
           <div class="flex-grow-1">
             <label class="fw-bold mb-2" style="font-size:14px;">Judul Kuis</label>
-
             <div class="text-muted fst-italic fw-light" style="font-size:12px;margin-top:-6px;margin-bottom:8px;">
               Maksimal 45 karakter (termasuk spasi). Hanya boleh huruf, angka, spasi, titik (.), koma (,), titik dua (:), dan tanda tanya (?).
             </div>
-
             <input class="pill-input" type="text" name="judul_paket" id="judulPaketInput" placeholder="Tuliskan Judul Kuis di sini..." required maxlength="45">
           </div>
 
