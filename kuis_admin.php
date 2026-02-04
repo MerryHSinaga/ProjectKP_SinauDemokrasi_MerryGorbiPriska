@@ -1,310 +1,1145 @@
 <?php
+declare(strict_types=1);
 session_start();
 
-if (!isset($_SESSION['kuis_id']) || !isset($_SESSION['nama'])) {
-    header("Location: daftar_kuis.php");
-    exit;
+if (empty($_SESSION["admin"])) {
+  header("Location: login_admin.php");
+  exit;
 }
 
-function db(): PDO {
-    static $pdo;
-    if ($pdo) return $pdo;
-    try {
-        $pdo = new PDO(
-            "mysql:host=localhost;dbname=sinau_pemilu;charset=utf8mb4",
-            "root",
-            "",
-            [
-                PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
-                PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC
-            ]
+require_once 'db.php';
+
+const BAGIAN_ENUM = [
+  'Keuangan',
+  'Umum dan Logistik',
+  'Teknis Penyelenggara Pemilu, Partisipasi Hubungan Masyarakat',
+  'Hukum dan SDM',
+  'Perencanaan',
+  'Data dan Informasi',
+];
+
+function validate_bagian(?string $bagian): ?string {
+  if ($bagian === null) return null;
+  $bagian = trim($bagian);
+  if ($bagian === "") return null;
+  return in_array($bagian, BAGIAN_ENUM, true) ? $bagian : null;
+}
+
+function validate_judul(string $judul): string {
+  $judul = trim($judul);
+  if ($judul === "") {
+    throw new RuntimeException("Judul kuis wajib diisi.");
+  }
+
+  if (mb_strlen($judul, "UTF-8") > 45) {
+    throw new RuntimeException("Judul terlalu panjang. Maksimal 45 karakter (termasuk spasi).");
+  }
+
+  if (!preg_match('/^[\p{L}\p{N} \.\,\:\?]+$/u', $judul)) {
+    throw new RuntimeException("Judul hanya boleh berisi huruf, angka, spasi, titik (.), koma (,), titik dua (:), dan tanda tanya (?).");
+  }
+
+  return $judul;
+}
+
+function judul_ellipsis(string $text, int $max = 40): string {
+  $text = trim($text);
+  if ($text === "") return "";
+  if (mb_strlen($text, "UTF-8") <= $max) return $text;
+  return mb_substr($text, 0, $max, "UTF-8") . "...";
+}
+
+
+function friendly_error_message(string $msg): string {
+  $m = trim($msg);
+
+  $lower = strtolower($m);
+  if (
+    str_contains($lower, "sqlstate") ||
+    str_contains($lower, "pdo") ||
+    str_contains($lower, "syntax") ||
+    str_contains($lower, "duplicate") ||
+    str_contains($lower, "foreign key")
+  ) {
+    return "Terjadi kendala saat menyimpan data. Silakan coba lagi.";
+  }
+
+  if ($m === "") {
+    return "Gagal memproses permintaan. Silakan coba lagi.";
+  }
+
+  return $m;
+}
+
+function ensure_tables(): void {
+  db()->exec("
+    CREATE TABLE IF NOT EXISTS kuis_paket (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      judul VARCHAR(255) NOT NULL,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  ");
+
+  try {
+    db()->exec("ALTER TABLE kuis_paket ADD COLUMN input_mode ENUM('csv','manual') NOT NULL DEFAULT 'csv' AFTER judul");
+  } catch (Throwable $e) {}
+
+  try {
+    db()->exec("
+      ALTER TABLE kuis_paket
+      ADD COLUMN bagian ENUM(
+        'Keuangan',
+        'Umum dan Logistik',
+        'Teknis Penyelenggara Pemilu, Partisipasi Hubungan Masyarakat',
+        'Hukum dan SDM',
+        'Perencanaan',
+        'Data dan Informasi'
+      ) DEFAULT NULL
+      AFTER input_mode
+    ");
+  } catch (Throwable $e) {}
+
+  db()->exec("
+    CREATE TABLE IF NOT EXISTS kuis_soal (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      paket_id INT NOT NULL,
+      nomor INT NOT NULL,
+      pertanyaan TEXT NOT NULL,
+      opsi_a VARCHAR(255) NOT NULL,
+      opsi_b VARCHAR(255) NOT NULL,
+      opsi_c VARCHAR(255) NOT NULL,
+      opsi_d VARCHAR(255) NOT NULL,
+      jawaban ENUM('A','B','C','D') NOT NULL,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP NULL DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP,
+      UNIQUE KEY uq_paket_nomor (paket_id, nomor),
+      CONSTRAINT fk_soal_paket FOREIGN KEY (paket_id) REFERENCES kuis_paket(id)
+        ON DELETE CASCADE ON UPDATE CASCADE
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  ");
+}
+
+function paket_create(string $judul, string $mode, ?string $bagian): int {
+  $judul = validate_judul($judul);
+  $mode = strtolower(trim($mode));
+  $bagian = validate_bagian($bagian);
+
+  if (!in_array($mode, ["csv","manual"], true)) $mode = "csv";
+
+  if ($bagian === null) throw new RuntimeException("Bagian wajib dipilih.");
+
+  $st = db()->prepare("INSERT INTO kuis_paket (judul, input_mode, bagian) VALUES (?, ?, ?)");
+  $st->execute([$judul, $mode, $bagian]);
+  return (int)db()->lastInsertId();
+}
+
+function paket_update(int $id, string $judul, ?string $mode = null, ?string $bagian = null): void {
+  if ($id <= 0) throw new RuntimeException("Data paket tidak valid.");
+
+  $judul = validate_judul($judul);
+
+  $bagian = validate_bagian($bagian);
+  if ($bagian === null) throw new RuntimeException("Bagian wajib dipilih.");
+
+  if ($mode !== null) {
+    $mode = strtolower(trim($mode));
+    if (!in_array($mode, ["csv","manual"], true)) $mode = "csv";
+    $st = db()->prepare("UPDATE kuis_paket SET judul=?, input_mode=?, bagian=? WHERE id=?");
+    $st->execute([$judul, $mode, $bagian, $id]);
+    return;
+  }
+
+  $st = db()->prepare("UPDATE kuis_paket SET judul=?, bagian=? WHERE id=?");
+  $st->execute([$judul, $bagian, $id]);
+}
+
+function soal_upsert(
+  int $paketId,
+  int $nomor,
+  string $pertanyaan,
+  string $a,
+  string $b,
+  string $c,
+  string $d,
+  string $jawaban
+): void {
+  if ($paketId <= 0) throw new RuntimeException("Data paket tidak valid.");
+
+  if ($nomor < 1 || $nomor > 15) {
+    throw new RuntimeException("Nomor soal harus 1 sampai 15.");
+  }
+
+  $pertanyaan = trim($pertanyaan);
+  $a = trim($a); $b = trim($b); $c = trim($c); $d = trim($d);
+  $jawaban = strtoupper(trim($jawaban));
+
+  if ($pertanyaan === "" && $a === "" && $b === "" && $c === "" && $d === "" && $jawaban === "") return;
+
+  if ($pertanyaan === "" || $a === "" || $b === "" || $c === "" || $d === "") {
+    throw new RuntimeException("Nomor {$nomor}: Pertanyaan dan semua pilihan (A–D) harus diisi.");
+  }
+  if (!in_array($jawaban, ["A","B","C","D"], true)) {
+    throw new RuntimeException("Nomor {$nomor}: Kunci jawaban harus A, B, C, atau D.");
+  }
+
+  $sql = "
+    INSERT INTO kuis_soal (paket_id, nomor, pertanyaan, opsi_a, opsi_b, opsi_c, opsi_d, jawaban)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    ON DUPLICATE KEY UPDATE
+      pertanyaan=VALUES(pertanyaan),
+      opsi_a=VALUES(opsi_a),
+      opsi_b=VALUES(opsi_b),
+      opsi_c=VALUES(opsi_c),
+      opsi_d=VALUES(opsi_d),
+      jawaban=VALUES(jawaban)
+  ";
+  $st = db()->prepare($sql);
+  $st->execute([$paketId, $nomor, $pertanyaan, $a, $b, $c, $d, $jawaban]);
+}
+
+function csv_parse_valid_rows(string $tmpPath): array {
+  $fh = fopen($tmpPath, "r");
+  if (!$fh) throw new RuntimeException("File CSV tidak bisa dibaca. Silakan coba upload ulang.");
+
+  $rows = [];
+  $line = 0;
+
+  try {
+    while (($row = fgetcsv($fh)) !== false) {
+      $line++;
+      $row = array_map(static fn($v) => is_string($v) ? trim($v) : "", $row);
+
+      $allEmpty = true;
+      foreach ($row as $v) {
+        if ((string)$v !== "") { $allEmpty = false; break; }
+      }
+      if ($allEmpty) continue;
+
+      if (count($row) < 7) {
+        throw new RuntimeException("Format CSV tidak sesuai. Pastikan ada 7 kolom: nomor, pertanyaan, opsi_a, opsi_b, opsi_c, opsi_d, jawaban.");
+      }
+
+      if ($line === 1 && !ctype_digit((string)$row[0])) {
+        continue;
+      }
+
+      if (!ctype_digit((string)$row[0])) {
+        throw new RuntimeException("Format CSV tidak sesuai. Kolom nomor harus angka.");
+      }
+
+      $nomor = (int)$row[0];
+      $pertanyaan = (string)$row[1];
+      $a = (string)$row[2];
+      $b = (string)$row[3];
+      $c = (string)$row[4];
+      $d = (string)$row[5];
+      $jawaban = strtoupper((string)$row[6]);
+
+      if ($nomor < 1 || $nomor > 15) {
+        throw new RuntimeException("Nomor soal pada CSV harus 1 sampai 15.");
+      }
+
+      if (trim($pertanyaan) === "" || trim($a) === "" || trim($b) === "" || trim($c) === "" || trim($d) === "") {
+        throw new RuntimeException("Ada soal pada CSV yang belum lengkap. Pastikan pertanyaan dan opsi A–D terisi.");
+      }
+
+      if (!in_array($jawaban, ["A","B","C","D"], true)) {
+        throw new RuntimeException("Kunci jawaban pada CSV harus A, B, C, atau D.");
+      }
+
+      $rows[] = [
+        "nomor" => $nomor,
+        "pertanyaan" => $pertanyaan,
+        "a" => $a,
+        "b" => $b,
+        "c" => $c,
+        "d" => $d,
+        "jawaban" => $jawaban,
+        "line" => $line,
+      ];
+    }
+  } finally {
+    fclose($fh);
+  }
+
+  if (count($rows) === 0) {
+    throw new RuntimeException("CSV tidak berisi soal. Pastikan minimal ada 1 soal.");
+  }
+
+  return $rows;
+}
+
+ensure_tables();
+
+if (isset($_GET["download"]) && $_GET["download"] === "template_csv") {
+  $filename = "template_kuis.csv";
+  header("Content-Type: text/csv; charset=utf-8");
+  header("Content-Disposition: attachment; filename=\"{$filename}\"");
+  header("Pragma: no-cache");
+  header("Expires: 0");
+
+  $out = fopen("php://output", "w");
+  if ($out === false) exit;
+
+  fputcsv($out, ["nomor","pertanyaan","opsi_a","opsi_b","opsi_c","opsi_d","jawaban"]);
+  fputcsv($out, ["1","Contoh pertanyaan?","Opsi A","Opsi B","Opsi C","Opsi D","A"]);
+
+  fclose($out);
+  exit;
+}
+
+if (isset($_GET["ajax"]) && $_GET["ajax"] === "paket_detail") {
+  header("Content-Type: application/json; charset=utf-8");
+  $id = (int)($_GET["id"] ?? 0);
+  if ($id <= 0) { echo json_encode(["ok"=>false]); exit; }
+
+  $p = db()->prepare("SELECT id, judul, input_mode, bagian FROM kuis_paket WHERE id=?");
+  $p->execute([$id]);
+  $paket = $p->fetch();
+  if (!$paket) { echo json_encode(["ok"=>false]); exit; }
+
+  $soal = db()->prepare("SELECT nomor, pertanyaan, opsi_a, opsi_b, opsi_c, opsi_d, jawaban
+                         FROM kuis_soal WHERE paket_id=? ORDER BY nomor ASC");
+  $soal->execute([$id]);
+  $rows = $soal->fetchAll();
+
+  echo json_encode([
+    "ok"=>true,
+    "paket"=>[
+      "id" => (int)$paket["id"],
+      "judul" => (string)$paket["judul"],
+      "input_mode" => (string)$paket["input_mode"],
+      "bagian" => $paket["bagian"] !== null ? (string)$paket["bagian"] : "",
+    ],
+    "soal"=>$rows
+  ]);
+  exit;
+}
+
+$toast = ["type"=>"", "msg"=>""];
+
+try {
+  if ($_SERVER["REQUEST_METHOD"] === "POST") {
+    $action = (string)($_POST["action"] ?? "");
+
+    if ($action === "paket_delete") {
+      $id = (int)($_POST["paket_id"] ?? 0);
+      if ($id <= 0) throw new RuntimeException("Data paket tidak valid.");
+      db()->prepare("DELETE FROM kuis_paket WHERE id=?")->execute([$id]);
+      $toast = ["type"=>"success","msg"=>"Paket kuis berhasil dihapus."];
+    }
+
+    if ($action === "soal_save_bulk") {
+      $paketId = (int)($_POST["paket_id"] ?? 0);
+      $judulPaket = (string)($_POST["judul_paket"] ?? "");
+      $bagian = (string)($_POST["bagian"] ?? "");
+
+      db()->beginTransaction();
+
+      if ($paketId <= 0) {
+        $paketId = paket_create($judulPaket, "manual", $bagian);
+      } else {
+        paket_update($paketId, $judulPaket, "manual", $bagian);
+      }
+
+      $bulkJson = (string)($_POST["bulk_json"] ?? "");
+      if ($bulkJson === "") throw new RuntimeException("Data soal masih kosong.");
+
+      $bulk = json_decode($bulkJson, true);
+      if (!is_array($bulk)) throw new RuntimeException("Data soal tidak terbaca. Silakan coba lagi.");
+
+      $saved = 0;
+      foreach ($bulk as $noStr => $d) {
+        $no = (int)$noStr;
+        if (!is_array($d)) continue;
+
+        soal_upsert(
+          $paketId,
+          $no,
+          (string)($d["pertanyaan"] ?? ""),
+          (string)($d["a"] ?? ""),
+          (string)($d["b"] ?? ""),
+          (string)($d["c"] ?? ""),
+          (string)($d["d"] ?? ""),
+          (string)($d["jawaban"] ?? "")
         );
-        return $pdo;
-    } catch (PDOException $e) {
-        die("Koneksi database gagal.");
-    }
-}
 
-$paketId = (int) $_SESSION['kuis_id'];
+        if (trim((string)($d["pertanyaan"] ?? "")) !== "") $saved++;
+      }
 
-if (!isset($_SESSION['kuis_mulai'])) {
-    $_SESSION['kuis_mulai'] = true;
-    $_SESSION['jawaban'] = [];
-    unset($_SESSION['soal_acak_' . $paketId]);
-}
-
-$stmt = db()->prepare("SELECT judul FROM kuis_paket WHERE id=?");
-$stmt->execute([$paketId]);
-$paket = $stmt->fetch();
-if (!$paket) { header("Location: daftar_kuis.php"); exit; }
-
-$sessionKey = 'soal_acak_' . $paketId;
-if (!isset($_SESSION[$sessionKey])) {
-    $stmt = db()->prepare("SELECT id, pertanyaan, opsi_a, opsi_b, opsi_c, opsi_d, jawaban FROM kuis_soal WHERE paket_id=?");
-    $stmt->execute([$paketId]);
-    $soalAsli = $stmt->fetchAll();
-    
-    if (!$soalAsli) die("Soal belum tersedia");
-    
-    shuffle($soalAsli);
-    foreach ($soalAsli as &$s) {
-        $opsi = [
-            'A' => $s['opsi_a'], 'B' => $s['opsi_b'], 
-            'C' => $s['opsi_c'], 'D' => $s['opsi_d']
-        ];
-        $keys = array_keys($opsi);
-        shuffle($keys);
-        $s['opsi_acak'] = [];
-        foreach ($keys as $k) { $s['opsi_acak'][$k] = $opsi[$k]; }
-    }
-    unset($s);
-    $_SESSION[$sessionKey] = $soalAsli;
-}
-
-$soal = $_SESSION[$sessionKey];
-$totalSoal = count($soal);
-
-if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    if (isset($_POST['soal_id'])) {
-        $sId = (int)$_POST['soal_id'];
-        if (isset($_POST['jawaban'])) {
-            $_SESSION['jawaban'][$sId] = $_POST['jawaban'];
-        }
+      db()->commit();
+      $toast = ["type"=>"success","msg"=>"Soal berhasil disimpan (Manual). Total terisi: {$saved} (maks 15)."];
     }
 
-    if (isset($_POST['submit_kuis'])) {
-        $benar = 0;
-        foreach ($soal as $s) {
-            $userJawab = $_SESSION['jawaban'][$s['id']] ?? '';
-            if (strtoupper($userJawab) === strtoupper($s['jawaban'])) {
-                $benar++;
-            }
-        }
-        $_SESSION['skor'] = round(($benar / $totalSoal) * 100);
-        $_SESSION['materi'] = $paket['judul'];
-        
-        unset($_SESSION['kuis_mulai'], $_SESSION[$sessionKey]);
-        header("Location: user_nilaikuis.php");
-        exit;
+    if ($action === "csv_import") {
+      $paketId = (int)($_POST["paket_id"] ?? 0);
+      $judulPaket = (string)($_POST["judul_paket"] ?? "");
+      $bagian = (string)($_POST["bagian"] ?? "");
+
+      if (!isset($_FILES["csv"]) || !is_uploaded_file($_FILES["csv"]["tmp_name"])) {
+        throw new RuntimeException("File CSV wajib diupload.");
+      }
+
+      $parsedRows = csv_parse_valid_rows($_FILES["csv"]["tmp_name"]);
+
+      db()->beginTransaction();
+
+      if ($paketId <= 0) {
+        $paketId = paket_create($judulPaket, "csv", $bagian);
+      } else {
+        paket_update($paketId, $judulPaket, "csv", $bagian);
+      }
+
+      $saved = 0;
+      foreach ($parsedRows as $r) {
+        soal_upsert(
+          $paketId,
+          (int)$r["nomor"],
+          (string)$r["pertanyaan"],
+          (string)$r["a"],
+          (string)$r["b"],
+          (string)$r["c"],
+          (string)$r["d"],
+          (string)$r["jawaban"]
+        );
+        $saved++;
+      }
+
+      db()->commit();
+      $toast = ["type"=>"success","msg"=>"Import CSV berhasil. Total soal: {$saved} (maks 15)."];
     }
+  }
+} catch (Throwable $e) {
+  if (db()->inTransaction()) db()->rollBack();
+  $toast = ["type"=>"danger","msg"=>friendly_error_message($e->getMessage())];
 }
 
-$index = isset($_POST['target_index']) ? (int)$_POST['target_index'] : 0;
-$index = max(0, min($index, $totalSoal - 1));
-$curSoal = $soal[$index];
-$jawabanTersimpan = $_SESSION['jawaban'] ?? [];
+$paket = db()->query("
+  SELECT p.id, p.judul, p.input_mode, p.bagian,
+         (SELECT COUNT(*) FROM kuis_soal s WHERE s.paket_id=p.id) AS jumlah_soal
+  FROM kuis_paket p
+  ORDER BY p.id DESC
+")->fetchAll();
 ?>
-<!DOCTYPE html>
+<!doctype html>
 <html lang="id">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Kuis – Sinau Pemilu</title>
-    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-    <style>
-        body { font-family: 'Inter', sans-serif; background: #E5E8FF; padding-top: 120px; padding-bottom: 50px; }
-        .bg-maroon { background: #700D09; }
-        .soal-card { background: #fff; border-radius: 20px; padding: 30px; box-shadow: 0 8px 20px rgba(0,0,0,0.2); border: none; }
-        
-        .opsi-container { display: flex; flex-direction: column; gap: 10px; margin-top: 20px; }
-        .opsi-item { 
-            display: block; cursor: pointer; padding: 5px 0;
-        }
-        .opsi-item input { 
-            accent-color: #700D09; margin-right: 10px; cursor: pointer;
-            width: 16px; height: 16px; vertical-align: middle;
-        }
-        .opsi-item span { vertical-align: middle; font-size: 16px; color: #333; }
-        
-        .nav-soal { display: flex; gap: 10px; flex-wrap: wrap; justify-content: center; margin-top: 25px; }
-        .nav-item { 
-            width: 36px; height: 36px; border-radius: 50%; border: 2px solid #700D09; 
-            background: transparent; color: #700D09; font-weight: 600; display: flex; 
-            align-items: center; justify-content: center; cursor: pointer; transition: 0.3s;
-            text-decoration: none; font-size: 14px;
-        }
-        .nav-item.answered { background: #700D09; color: #fff; }
-        .nav-item.active { background: rgba(112, 13, 9, 0.2); }
-        
-        .btn-custom { border-radius: 25px; padding: 8px 30px; font-weight: 500; border: none; color: #fff; transition: 0.3s; }
-        .btn-prev { background: rgba(112, 13, 9, 0.8); }
-        .btn-next { background: #700D09; }
-        .btn-submit { background: #459517; }
-        .btn-custom:hover { opacity: 0.9; }
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Daftar Soal | Admin</title>
 
-        .modal-overlay { 
-            position: fixed; inset: 0; background: rgba(0,0,0,0.6); 
-            display: none; align-items: center; justify-content: center; z-index: 9999; 
-        }
-        .modal-content-custom { 
-            background: #fff; padding: 26px; border-radius: 18px; 
-            width: 360px; text-align: center; box-shadow: 0 10px 25px rgba(0,0,0,0.1);
-        }
-        .modal-btns { display: flex; gap: 12px; justify-content: center; margin-top: 18px; }
-        .btn-modal { 
-            border: 0; border-radius: 20px; padding: 6px 16px; min-width: 110px;
-            font-weight: 600; transition: 0.2s;
-        }
-        .btn-modal-primary { background: #700D09; color: #fff; }
-        .btn-modal-secondary { background: #700D09; color: #fff; } 
-    </style>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet">
+
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.css" rel="stylesheet">
+
+  <style>
+    :root{
+      --maroon:#700D09;
+      --bg:#E9EDFF;
+      --header-gray:#d9d9d9;
+      --row-line:#e6e6e6;
+      --shadow:0 14px 22px rgba(0,0,0,.18);
+    }
+
+    body{
+      margin:0;
+      font-family:'Inter',system-ui,-apple-system,sans-serif;
+      background:var(--bg);
+      min-height:100vh;
+      display:flex;
+      flex-direction:column;
+    }
+
+    .bg-maroon{background:var(--maroon)!important}
+    .navbar{padding:20px 0;border-bottom:1px solid rgba(0,0,0,.15);}
+
+    .nav-link{
+      color:#fff !important;
+      font-weight:500;
+    }
+
+    .nav-hover{
+      position:relative;
+      padding-bottom:6px;
+    }
+
+    .nav-hover::after{
+      content:"";
+      position:absolute;
+      left:0;
+      bottom:0;
+      width:0;
+      height:3px;
+      background:#f4c430;
+      transition:0.3s ease;
+    }
+
+    .nav-hover:hover::after,
+    .nav-active::after{
+      width:100%;
+    }
+
+    .page{
+      max-width:1200px;
+      margin:0 auto;
+      width:100%;
+      padding:140px 20px 40px;
+      flex:1;
+    }
+
+    .title{font-weight:900;font-size:48px;margin:0;color:#111;line-height:1.05;}
+    .subtitle{margin-top:10px;color:#333;font-size:14px;font-style:italic;}
+
+    .btn-add{
+      border:0;background:var(--maroon);color:#fff;
+      font-weight:700;font-size:14px;
+      padding:12px 34px;border-radius:999px;
+      display:inline-flex;align-items:center;gap:10px;white-space:nowrap;
+      box-shadow:0 10px 18px rgba(0,0,0,.18);
+      transition:transform .2s ease, filter .2s ease;
+      margin-top:18px;
+    }
+    .btn-add:hover{filter:brightness(.92);transform:translateY(1px);}
+    .btn-add:active{transform:translateY(2px);}
+
+    .table-wrap{
+      margin-top:44px;background:#fff;border-radius:26px;overflow:hidden;
+      box-shadow:var(--shadow);max-width:980px;margin-left:auto;margin-right:auto;
+    }
+
+    .table-scroll{
+      overflow-x:auto;
+      -webkit-overflow-scrolling:touch;
+    }
+
+    .table-grid{
+      min-width:980px;
+    }
+
+    .table-head{
+      background:var(--header-gray);padding:18px 34px;
+      display:grid;
+      grid-template-columns:90px 1fr 280px 220px 90px;
+      align-items:center;
+      font-weight:900;font-size:20px;color:#111;
+    }
+    .table-row{
+      padding:18px 34px;display:grid;
+      grid-template-columns:90px 1fr 280px 220px 90px;
+      align-items:center;border-top:1px solid var(--row-line);font-size:16px;color:#111;
+    }
+
+    .cell-center{text-align:center;}
+
+    .icon-btn{
+      border:0;background:transparent;padding:0;cursor:pointer;
+      display:inline-flex;align-items:center;justify-content:center;
+      width:44px;height:44px;border-radius:12px;
+      transition:background .15s ease, transform .15s ease;
+    }
+    .icon-btn:hover{background:rgba(112,13,9,.08);transform:translateY(-1px);}
+    .icon-edit,.icon-trash{color:var(--maroon);font-size:22px;}
+
+    .mode-badge{
+      display:inline-flex;align-items:center;gap:8px;
+      font-size:12px;font-weight:900;
+      padding:6px 12px;border-radius:999px;
+      border:2px solid rgba(112,13,9,.25);
+      background:#fff;
+      color:#111;
+      margin-left:10px;
+      white-space:nowrap;
+    }
+
+    .modal-content{border:0;border-radius:28px;overflow:hidden;box-shadow:0 30px 60px rgba(0,0,0,.28);}
+    .modal-header-custom{background:var(--maroon);padding:22px 28px 16px;position:relative;}
+    .modal-title-custom{margin:0;color:#fff;font-weight:900;font-size:34px;line-height:1.05;}
+    .modal-subtitle-custom{margin-top:6px;color:rgba(255,255,255,.85);font-style:italic;font-size:13px;}
+    .modal-close-x{
+      position:absolute;top:16px;right:18px;width:44px;height:44px;border-radius:12px;border:0;
+      background:transparent;color:#fff;font-size:30px;display:flex;align-items:center;justify-content:center;
+      opacity:.95;transition:opacity .15s ease, transform .15s ease;
+    }
+    .modal-close-x:hover{opacity:1;transform:scale(1.03);}
+
+    .modal-body{
+      padding:18px 24px 22px;
+      background:#fff;
+      max-height:calc(100vh - 240px);
+      overflow:auto;
+    }
+
+    .pill-input{border:2px solid #111;border-radius:999px;padding:10px 16px;font-size:14px;outline:none;width:100%;}
+    .pill-select{
+      appearance: none;
+      -webkit-appearance: none;
+      -moz-appearance: none;
+      background-color:#fff;
+      padding-right:42px; 
+      line-height: 1.2;
+    }
+
+    .pill-select{
+      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='20' height='20' fill='none' viewBox='0 0 24 24'%3E%3Cpath stroke='%23111' stroke-width='2' stroke-linecap='round' stroke-linejoin='round' d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+      background-repeat:no-repeat;
+      background-position:right 14px center;
+    }
+    textarea.big{border:2px solid #111;border-radius:18px;padding:12px 14px;font-size:14px;outline:none;width:100%;min-height:130px;resize:vertical;}
+
+    .mode-switch{width:180px;background:#d9d9d9;border-radius:999px;padding:6px;display:flex;gap:6px;user-select:none;}
+    .mode-pill{flex:1;border-radius:999px;padding:8px 0;text-align:center;font-weight:900;cursor:pointer;color:#fff;font-size:13px;}
+    .mode-pill.inactive{opacity:.55;background:transparent;color:#fff;}
+    .mode-pill.active{background:var(--maroon);}
+
+    .numbers{display:flex;flex-wrap:wrap;gap:10px;margin-top:10px;}
+    .num-btn{width:40px;height:40px;border-radius:999px;border:2px solid #111;background:#fff;font-weight:900;cursor:pointer;}
+    .num-btn.active{background:#e9edff;}
+    .num-btn.filled{border-color:var(--maroon);}
+
+    .dropzone{
+      margin-top:14px;height:170px;border-radius:18px;background:#d9d9d9;border:2px dashed rgba(112,13,9,.25);
+      display:flex;align-items:center;justify-content:center;text-align:center;cursor:pointer;
+      padding:14px;
+    }
+    .dropzone.dragover{outline:3px solid rgba(112,13,9,.35);}
+    .dropzone .dz-icon{font-size:50px;color:#fff;}
+    .dropzone .dz-text{color:#fff;font-size:14px;font-weight:800;word-break:break-word;}
+
+    .ans-grid{display:flex;gap:10px;flex-wrap:wrap;margin-top:8px;}
+    .ans-item{display:flex;align-items:center;gap:8px;border:2px solid #111;border-radius:999px;padding:10px 14px;cursor:pointer;user-select:none;}
+    .ans-item input{accent-color: var(--maroon); transform:scale(1.05);}
+    .ans-item.active{border-color:var(--maroon); background:#f3e9e9;}
+
+    .actions{display:flex;justify-content:flex-end;gap:12px;margin-top:16px;flex-wrap:wrap;}
+    .btn-save{border:0;background:var(--maroon);color:#fff;font-weight:900;font-size:14px;padding:12px 34px;border-radius:14px;}
+    .btn-outline{border:2px solid #111;background:#fff;color:#111;font-weight:800;font-size:14px;padding:12px 34px;border-radius:14px;}
+
+    .tpl-link{
+      display:inline-flex;align-items:center;gap:8px;
+      font-weight:900;font-size:12px;
+      color:#333;text-decoration:none;
+      padding:6px 10px;border-radius:999px;
+      background:#f3f3f3;border:1px solid rgba(0,0,0,.12);
+      transition:transform .15s ease, filter .15s ease;
+      white-space:nowrap;
+    }
+    .tpl-link:hover{filter:brightness(.98);transform:translateY(-1px);}
+
+    .info-max{
+      margin-top:8px;
+      font-size:12px;
+      font-weight:900;
+      color:#700D09;
+      background:rgba(112,13,9,.08);
+      border:1px solid rgba(112,13,9,.18);
+      padding:8px 10px;
+      border-radius:12px;
+      display:inline-flex;
+      align-items:center;
+      gap:8px;
+    }
+
+    .btn-back{
+      width:42px;height:42px;border-radius:12px;
+      display:inline-flex;align-items:center;justify-content:center;
+      color:#fff;
+      text-decoration:none;
+      transition:transform .15s ease, filter .15s ease;
+    }
+    .btn-back:hover{filter:brightness(1.05);transform:translateY(-1px);}
+    .btn-back i{font-size:22px;line-height:1;}
+
+    @media (max-width: 576px){
+      body{font-size:13px;}
+      .title{font-size:32px;}
+      .subtitle{font-size:12px;}
+      .btn-add{font-size:12px;padding:10px 18px;margin-top:10px;}
+      .table-head{font-size:16px;padding:14px 16px;}
+      .table-row{font-size:14px;padding:14px 16px;}
+      .icon-btn{width:40px;height:40px;}
+      .icon-edit,.icon-trash{font-size:20px;}
+      .mode-badge{font-size:11px;padding:5px 10px;}
+      .modal-header-custom{padding:18px 18px 14px;}
+      .modal-title-custom{font-size:22px;}
+      .modal-subtitle-custom{font-size:12px;}
+      .modal-body{padding:14px 14px 16px;}
+      .pill-input{font-size:13px;padding:9px 14px;}
+      textarea.big{font-size:13px;}
+      .mode-switch{width:160px;}
+      .mode-pill{font-size:12px;}
+      .dropzone{height:150px;}
+      .dropzone .dz-icon{font-size:44px;}
+      .dropzone .dz-text{font-size:12px;}
+      .btn-save,.btn-outline{font-size:12px;padding:10px 18px;border-radius:12px;}
+      .tpl-link{font-size:11px;}
+      .info-max{font-size:11px;}
+      .table-grid{min-width:980px;}
+    }
+  </style>
 </head>
 <body>
 
-<nav class="navbar navbar-dark bg-maroon fixed-top py-4">
-    <div class="container">
-        <img src="/sinaupemilu/assets/LogoKPU.png" width="56" alt="Logo KPU" onerror="this.src='https://upload.wikimedia.org/wikipedia/commons/4/46/KPU_Logo.svg'">
+<nav class="navbar navbar-dark bg-maroon fixed-top">
+  <div class="container d-flex justify-content-between align-items-center">
+
+    <div class="d-flex align-items-center gap-2">
+      <a class="btn-back" href="javascript:history.back()" aria-label="Kembali" title="Kembali">
+        <i class="bi bi-arrow-left"></i>
+      </a>
+
+      <a class="navbar-brand d-flex align-items-center gap-2" href="admin.php">
+        <img src="Asset/LogoKPU.png" width="40" height="40" alt="KPU">
+        <span class="lh-sm text-white fs-6">
+          <strong>KPU</strong><br>DIY
+        </span>
+      </a>
     </div>
+
+    <ul class="navbar-nav flex-row gap-5 align-items-center">
+      <li class="nav-item">
+        <a class="nav-link nav-hover" href="login_admin.php">LOGOUT</a>
+      </li>
+    </ul>
+
+  </div>
 </nav>
 
-<div class="container">
-    <div class="row justify-content-center">
-        <div class="col-md-9">
-            <h4 class="mb-3" style="font-weight: 700;"><?= htmlspecialchars($paket['judul']) ?></h4>
-            
-            <div class="soal-card">
-                <form method="POST" id="quizForm" action="user_kuis.php">
-                    <input type="hidden" name="target_index" id="target_index" value="<?= $index ?>">
-                    <input type="hidden" name="soal_id" value="<?= $curSoal['id'] ?>">
+<main class="page">
+  <div class="d-flex justify-content-between align-items-start flex-wrap gap-3" style="max-width:980px;margin:0 auto;">
+    <div>
+      <h1 class="title">Daftar Soal</h1>
+      <div class="subtitle">Klik tombol edit untuk memperbarui soal.</div>
+    </div>
 
-                    <p><b><?= $index + 1 ?>.</b> <?= htmlspecialchars($curSoal['pertanyaan']) ?></p>
+    <button class="btn-add" type="button" id="btnOpenAdd">
+      <span>+ Tambah Soal</span>
+    </button>
+  </div>
 
-                    <div class="opsi-container">
-                        <?php foreach ($curSoal['opsi_acak'] as $key => $val): ?>
-                            <label class="opsi-item">
-                                <input type="radio" name="jawaban" value="<?= $key ?>" 
-                                    <?= (($jawabanTersimpan[$curSoal['id']] ?? '') === $key) ? 'checked' : '' ?>>
-                                <span><?= htmlspecialchars($val) ?></span>
-                            </label>
-                        <?php endforeach; ?>
-                    </div>
+  <?php if ($toast["type"]): ?>
+    <div class="alert alert-<?= htmlspecialchars($toast["type"]) ?> mt-4"
+         style="border-radius:16px;font-weight:800;max-width:980px;margin-left:auto;margin-right:auto;">
+      <?= htmlspecialchars($toast["msg"]) ?>
+    </div>
+  <?php endif; ?>
 
-                    <div class="d-flex justify-content-between mt-4">
-                        <?php if ($index > 0): ?>
-                            <button type="button" class="btn-custom btn-prev" onclick="navigate(<?= $index - 1 ?>)">Sebelumnya</button>
-                        <?php else: ?>
-                            <div></div>
-                        <?php endif; ?>
+  <section class="table-wrap">
+    <div class="table-scroll">
+      <div class="table-head table-grid">
+        <div></div>
+        <div class="text">PAKET SOAL</div>
+        <div class="text">BAGIAN</div>
+        <div class="text-center">JUMLAH SOAL</div>
+        <div></div>
+      </div>
 
-                        <?php if ($index < $totalSoal - 1): ?>
-                            <button type="button" class="btn-custom btn-next" onclick="navigate(<?= $index + 1 ?>)">Selanjutnya</button>
-                        <?php else: ?>
-                            <button type="button" class="btn-custom btn-submit" onclick="attemptSubmit()">Kirim</button>
-                        <?php endif; ?>
-                    </div>
-                </form>
+      <?php foreach ($paket as $p): ?>
+        <?php
+          $judulFull = (string)$p["judul"];
+          $judulShow = judul_ellipsis($judulFull, 40);
+          $bagianVal = (string)($p["bagian"] ?? "");
+        ?>
+        <div class="table-row table-grid">
+          <div class="cell-center">
+            <button class="icon-btn btn-edit" type="button"
+                    data-id="<?= (int)$p["id"] ?>"
+                    data-judul="<?= htmlspecialchars($judulFull) ?>"
+                    data-mode="<?= htmlspecialchars((string)$p["input_mode"]) ?>"
+                    data-bagian="<?= htmlspecialchars($bagianVal) ?>">
+              <i class="bi bi-pencil-fill icon-edit"></i>
+            </button>
+          </div>
+
+          <div title="<?= htmlspecialchars($judulFull) ?>" style="display:flex;flex-direction:column;align-items:flex-start;">
+            <div><?= htmlspecialchars($judulShow) ?></div>
+            <div style="margin-top:6px;">
+              <span class="mode-badge" style="margin-left:0;"><?= strtoupper((string)$p["input_mode"]) ?></span>
+            </div>
+          </div>
+
+
+          <div title="<?= htmlspecialchars($bagianVal) ?>">
+            <?= htmlspecialchars($bagianVal !== "" ? $bagianVal : "-") ?>
+          </div>
+
+          <div class="cell-center"><?= (int)$p["jumlah_soal"] ?></div>
+
+          <div class="cell-center">
+            <form method="post" onsubmit="return confirm('Yakin hapus paket kuis ini?')">
+              <input type="hidden" name="action" value="paket_delete">
+              <input type="hidden" name="paket_id" value="<?= (int)$p["id"] ?>">
+              <button class="icon-btn" type="submit" title="Hapus">
+                <i class="bi bi-trash3-fill icon-trash"></i>
+              </button>
+            </form>
+          </div>
+        </div>
+      <?php endforeach; ?>
+
+      <div style="height:14px;background:#fff"></div>
+    </div>
+  </section>
+
+</main>
+
+<div class="modal fade" id="kuisModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered modal-lg">
+    <form class="modal-content" id="kuisForm" method="post" enctype="multipart/form-data">
+      <div class="modal-header-custom">
+        <button type="button" class="modal-close-x" data-bs-dismiss="modal" aria-label="Close">&times;</button>
+        <div class="modal-title-custom" id="modalTitle">Input Kuis</div>
+        <div class="modal-subtitle-custom">Lengkapi formulir di bawah ini</div>
+      </div>
+
+      <div class="modal-body">
+        <input type="hidden" name="action" id="actionInput" value="csv_import">
+        <input type="hidden" name="paket_id" id="paketIdInput" value="">
+        <input type="hidden" name="bulk_json" id="bulkJsonInput" value="">
+
+        <div class="d-flex justify-content-between align-items-center gap-3 flex-wrap">
+          <div class="flex-grow-1">
+            <label class="fw-bold mb-2" style="font-size:14px;">Judul Kuis</label>
+
+            <div class="text-muted fst-italic fw-light" style="font-size:12px;margin-top:-6px;margin-bottom:8px;">
+              Maksimal 45 karakter (termasuk spasi). Hanya boleh huruf, angka, spasi, titik (.), koma (,), titik dua (:), dan tanda tanya (?).
             </div>
 
-            <div class="nav-soal">
-                <?php foreach ($soal as $i => $s): 
-                    $isAnswered = isset($jawabanTersimpan[$s['id']]);
-                    $activeClass = ($i === $index) ? 'active' : '';
-                    $answeredClass = $isAnswered ? 'answered' : '';
-                ?>
-                    <div class="nav-item <?= $activeClass ?> <?= $answeredClass ?>" onclick="navigate(<?= $i ?>)">
-                        <?= $i + 1 ?>
-                    </div>
-                <?php endforeach; ?>
+            <input class="pill-input" type="text" name="judul_paket" id="judulPaketInput" placeholder="Tuliskan Judul Kuis di sini..." required maxlength="45">
+          </div>
+
+          <div class="flex-grow-1">
+            <label class="fw-bold mb-2" style="font-size:14px;">Bagian</label>
+            <select class="pill-input pill-select" id="bagianInput" name="bagian" required>
+              <option value="">-- Pilih Bagian --</option>
+              <option value="Keuangan">Keuangan</option>
+              <option value="Umum dan Logistik">Umum dan Logistik</option>
+              <option value="Teknis Penyelenggara Pemilu, Partisipasi Hubungan Masyarakat">Teknis Penyelenggara Pemilu, Partisipasi Hubungan Masyarakat</option>
+              <option value="Hukum dan SDM">Hukum dan SDM</option>
+              <option value="Perencanaan">Perencanaan</option>
+              <option value="Data dan Informasi">Data dan Informasi</option>
+            </select>
+          </div>
+
+          <div class="mode-switch mt-2 mt-md-4" id="modeSwitch">
+            <div class="mode-pill active" data-mode="csv">CSV</div>
+            <div class="mode-pill inactive" data-mode="manual">Manual</div>
+          </div>
+        </div>
+
+        <div id="csvArea" class="mt-4">
+          <div class="d-flex justify-content-between align-items-center gap-2 flex-wrap">
+            <label class="fw-bold mb-2" style="font-size:14px;">Input Kuis</label>
+            <a class="tpl-link" href="kuis_admin.php?download=template_csv" target="_blank" rel="noopener">
+              <i class="bi bi-download"></i> Unduh Template CSV
+            </a>
+          </div>
+
+          <div class="info-max">
+            <i class="bi bi-exclamation-circle"></i> Maksimal 15 soal (nomor 1–15)
+          </div>
+
+          <input type="file" name="csv" id="csvInput" accept=".csv,text/csv" class="d-none">
+          <div class="dropzone" id="csvDrop">
+            <div>
+              <div class="dz-icon"><i class="bi bi-filetype-csv"></i></div>
+              <div class="dz-text">Klik atau seret file CSV ke sini</div>
+              <div class="dz-text" id="csvName" style="font-size:12px;opacity:.85;"></div>
             </div>
+          </div>
+          <div class="text-muted mt-2" style="font-size:12px;">
+            Kolom wajib: <b>nomor, pertanyaan, opsi_a, opsi_b, opsi_c, opsi_d, jawaban(A/B/C/D)</b>
+          </div>
         </div>
-    </div>
+
+        <div id="manualArea" class="mt-4" style="display:none;">
+          <label class="fw-bold mb-2" style="font-size:14px;">Input Kuis</label>
+
+          <div class="info-max">
+            <i class="bi bi-exclamation-circle"></i> Maksimal 15 soal (nomor 1–15)
+          </div>
+
+          <div class="numbers" id="numbers"></div>
+          <input type="hidden" id="nomorActive" value="1">
+
+          <div class="mt-3">
+            <label class="fw-bold mb-2" style="font-size:14px;">Pertanyaan</label>
+            <textarea class="big" id="pertanyaanInput" placeholder="Tuliskan Pertanyaan di sini..."></textarea>
+          </div>
+
+          <div class="row g-3 mt-1">
+            <div class="col-md-6">
+              <label class="fw-bold mb-2" style="font-size:14px;">Pilihan A</label>
+              <input class="pill-input" id="opsiA" placeholder="Jawaban A...">
+            </div>
+            <div class="col-md-6">
+              <label class="fw-bold mb-2" style="font-size:14px;">Pilihan B</label>
+              <input class="pill-input" id="opsiB" placeholder="Jawaban B...">
+            </div>
+            <div class="col-md-6">
+              <label class="fw-bold mb-2" style="font-size:14px;">Pilihan C</label>
+              <input class="pill-input" id="opsiC" placeholder="Jawaban C...">
+            </div>
+            <div class="col-md-6">
+              <label class="fw-bold mb-2" style="font-size:14px;">Pilihan D</label>
+              <input class="pill-input" id="opsiD" placeholder="Jawaban D...">
+            </div>
+          </div>
+
+          <div class="mt-3">
+            <label class="fw-bold mb-2" style="font-size:14px;">Kunci Jawaban Benar</label>
+            <div class="ans-grid" id="ansGrid">
+              <label class="ans-item" data-val="A"><input type="radio" name="jawaban_radio" value="A"> <span>A</span></label>
+              <label class="ans-item" data-val="B"><input type="radio" name="jawaban_radio" value="B"> <span>B</span></label>
+              <label class="ans-item" data-val="C"><input type="radio" name="jawaban_radio" value="C"> <span>C</span></label>
+              <label class="ans-item" data-val="D"><input type="radio" name="jawaban_radio" value="D"> <span>D</span></label>
+            </div>
+          </div>
+        </div>
+
+        <div class="actions">
+          <button class="btn-outline" type="button" data-bs-dismiss="modal">Batalkan</button>
+          <button class="btn-save" type="submit">Simpan</button>
+        </div>
+      </div>
+    </form>
+  </div>
 </div>
 
-<div class="modal-overlay" id="exitModal">
-    <div class="modal-content-custom">
-        <p><b>Akhiri Kuis?</b><br>
-        <b>Jawaban tidak akan disimpan.</b></p>
-        <div class="modal-btns">
-            <button class="btn-modal btn-modal-primary" onclick="confirmExit()">Ya</button>
-            <button class="btn-modal btn-modal-secondary" onclick="closeModal('exitModal')">Tidak</button>
-        </div>
-    </div>
-</div>
-
-<div class="modal-overlay" id="incompleteModal">
-    <div class="modal-content-custom">
-        <p><b>Tidak dapat mengirim jawaban</b><br>
-        <b>Pastikan Anda telah menjawab seluruh soal.<br>
-        Silakan periksa kembali jawaban Anda sebelum mengirim.</b></p>
-        <div class="modal-btns">
-            <button class="btn-modal btn-modal-primary" onclick="closeModal('incompleteModal')">Ya</button>
-        </div>
-    </div>
-</div>
-
-<div class="modal-overlay" id="confirmSubmitModal">
-    <div class="modal-content-custom">
-        <p><b>Akhiri Kuis?</b><br>
-        <b>Jawaban tidak dapat diubah.</b></p>
-        <div class="modal-btns">
-            <button class="btn-modal btn-modal-primary" onclick="finalSubmit()">Ya</button>
-            <button class="btn-modal btn-modal-secondary" onclick="closeModal('confirmSubmitModal')">Tidak</button>
-        </div>
-    </div>
-</div>
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
 
 <script>
-    let isNavigatingInternal = false;
-    const totalSoal = <?= $totalSoal ?>;
-    
-    function navigate(targetIndex) {
-        if (targetIndex < 0 || targetIndex >= totalSoal) return;
-        isNavigatingInternal = true;
-        document.getElementById('target_index').value = targetIndex;
-        document.getElementById('quizForm').submit();
-    }
+  const modalEl = document.getElementById("kuisModal");
+  const modal = new bootstrap.Modal(modalEl, { backdrop: true, keyboard: true });
 
-    function attemptSubmit() {
-        const answeredCount = <?= count($jawabanTersimpan) ?>;
-        const currentRadio = document.querySelector('input[name="jawaban"]:checked');
-        const isCurrentAnswered = <?= isset($jawabanTersimpan[$curSoal['id']]) ? 'true' : 'false' ?>;
-        
-        let totalTerjawab = answeredCount;
-        if(!isCurrentAnswered && currentRadio) totalTerjawab++;
+  const btnOpenAdd = document.getElementById("btnOpenAdd");
+  const modalTitle = document.getElementById("modalTitle");
 
-        if (totalTerjawab < totalSoal) {
-            document.getElementById('incompleteModal').style.display = 'flex';
-        } else {
-            document.getElementById('confirmSubmitModal').style.display = 'flex';
-        }
-    }
+  const actionInput = document.getElementById("actionInput");
+  const paketIdInput = document.getElementById("paketIdInput");
+  const judulPaketInput = document.getElementById("judulPaketInput");
+  const bagianInput = document.getElementById("bagianInput");
+  const bulkJsonInput = document.getElementById("bulkJsonInput");
 
-    function finalSubmit() {
-        isNavigatingInternal = true;
-        const form = document.getElementById('quizForm');
-        const hiddenInput = document.createElement('input');
-        hiddenInput.type = 'hidden';
-        hiddenInput.name = 'submit_kuis';
-        hiddenInput.value = '1';
-        form.appendChild(hiddenInput);
-        form.submit();
-    }
+  const modeSwitch = document.getElementById("modeSwitch");
+  const csvArea = document.getElementById("csvArea");
+  const manualArea = document.getElementById("manualArea");
 
-    function closeModal(id) {
-        document.getElementById(id).style.display = 'none';
-    }
+  const csvInput = document.getElementById("csvInput");
+  const csvDrop = document.getElementById("csvDrop");
+  const csvName = document.getElementById("csvName");
 
-    history.pushState(null, null, window.location.href);
-    window.onpopstate = function () {
-        if (!isNavigatingInternal) {
-            document.getElementById('exitModal').style.display = 'flex';
-            history.pushState(null, null, window.location.href);
-        }
+  const numbers = document.getElementById("numbers");
+  const nomorActive = document.getElementById("nomorActive");
+
+  const pertanyaanInput = document.getElementById("pertanyaanInput");
+  const opsiA = document.getElementById("opsiA");
+  const opsiB = document.getElementById("opsiB");
+  const opsiC = document.getElementById("opsiC");
+  const opsiD = document.getElementById("opsiD");
+
+  const ansGrid = document.getElementById("ansGrid");
+
+  let currentMode = "csv";
+  let cacheSoal = {};
+
+  function setMode(mode){
+    currentMode = mode;
+
+    modeSwitch.querySelectorAll(".mode-pill").forEach(p=>{
+      const on = p.dataset.mode === mode;
+      p.classList.toggle("active", on);
+      p.classList.toggle("inactive", !on);
+    });
+    csvArea.style.display = (mode === "csv") ? "block" : "none";
+    manualArea.style.display = (mode === "manual") ? "block" : "none";
+  }
+
+  modeSwitch.addEventListener("click", (e)=>{
+    const pill = e.target.closest(".mode-pill");
+    if(!pill) return;
+    setMode(pill.dataset.mode);
+  });
+
+  function clearJawabanRadio(){
+    ansGrid.querySelectorAll("input[type=radio]").forEach(r => r.checked = false);
+    ansGrid.querySelectorAll(".ans-item").forEach(x => x.classList.remove("active"));
+  }
+
+  function setJawabanRadio(val){
+    clearJawabanRadio();
+    const r = ansGrid.querySelector(`input[type=radio][value="${val}"]`);
+    if(r) r.checked = true;
+    const lab = ansGrid.querySelector(`.ans-item[data-val="${val}"]`);
+    if(lab) lab.classList.add("active");
+  }
+
+  ansGrid.addEventListener("click", (e)=>{
+    const lab = e.target.closest(".ans-item");
+    if(!lab) return;
+    setJawabanRadio(lab.dataset.val);
+  });
+
+  function getJawabanVal(){
+    const r = ansGrid.querySelector("input[type=radio]:checked");
+    return r ? r.value : "";
+  }
+
+  function saveDraft(){
+    const no = parseInt(nomorActive.value,10);
+    cacheSoal[no] = {
+      pertanyaan: pertanyaanInput.value || "",
+      a: opsiA.value || "",
+      b: opsiB.value || "",
+      c: opsiC.value || "",
+      d: opsiD.value || "",
+      jawaban: getJawabanVal() || ""
     };
+  }
 
-    function confirmExit() {
-        isNavigatingInternal = true;
-        window.location.href = 'daftar_kuis.php';
+  function loadDraft(no){
+    const d = cacheSoal[no] || {pertanyaan:"",a:"",b:"",c:"",d:"",jawaban:""};
+    pertanyaanInput.value = d.pertanyaan;
+    opsiA.value = d.a; opsiB.value = d.b; opsiC.value = d.c; opsiD.value = d.d;
+    if(d.jawaban) setJawabanRadio(d.jawaban); else clearJawabanRadio();
+  }
+
+  function buildNumbers(){
+    numbers.innerHTML = "";
+    const activeNo = parseInt(nomorActive.value,10);
+    for(let i=1;i<=15;i++){
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "num-btn";
+      btn.textContent = i;
+
+      if(i === activeNo) btn.classList.add("active");
+      if(cacheSoal[i] && (cacheSoal[i].pertanyaan || "").trim() !== "") btn.classList.add("filled");
+
+      btn.addEventListener("click", ()=>{
+        saveDraft();
+        nomorActive.value = String(i);
+        loadDraft(i);
+        buildNumbers();
+      });
+
+      numbers.appendChild(btn);
+    }
+  }
+
+  function resetForm(){
+    paketIdInput.value = "";
+    judulPaketInput.value = "";
+    bagianInput.value = "";
+    bulkJsonInput.value = "";
+    cacheSoal = {};
+    nomorActive.value = "1";
+
+    pertanyaanInput.value = "";
+    opsiA.value=""; opsiB.value=""; opsiC.value=""; opsiD.value="";
+    clearJawabanRadio();
+
+    csvInput.value = "";
+    csvName.textContent = "";
+
+    buildNumbers();
+    setMode("csv");
+  }
+
+  csvDrop.addEventListener("click", ()=> csvInput.click());
+  csvDrop.addEventListener("dragover", (e)=>{ e.preventDefault(); csvDrop.classList.add("dragover"); });
+  csvDrop.addEventListener("dragleave", ()=> csvDrop.classList.remove("dragover"));
+  csvDrop.addEventListener("drop", (e)=>{
+    e.preventDefault();
+    csvDrop.classList.remove("dragover");
+    if(e.dataTransfer.files && e.dataTransfer.files[0]){
+      csvInput.files = e.dataTransfer.files;
+      csvName.textContent = e.dataTransfer.files[0].name;
+    }
+  });
+  csvInput.addEventListener("change", ()=>{
+    if(csvInput.files && csvInput.files[0]) csvName.textContent = csvInput.files[0].name;
+  });
+
+  btnOpenAdd.addEventListener("click", ()=>{
+    resetForm();
+    modalTitle.textContent = "Input Kuis";
+    modal.show();
+  });
+
+  document.querySelectorAll(".btn-edit").forEach(btn=>{
+    btn.addEventListener("click", async ()=>{
+      resetForm();
+      modalTitle.textContent = "Edit Kuis";
+
+      paketIdInput.value = btn.dataset.id || "";
+      judulPaketInput.value = btn.dataset.judul || "";
+      bagianInput.value = btn.dataset.bagian || "";
+
+      try{
+        const res = await fetch(`kuis_admin.php?ajax=paket_detail&id=${encodeURIComponent(paketIdInput.value)}`, { cache: "no-store" });
+        const json = await res.json();
+
+        if(json.ok){
+          if(json.paket && typeof json.paket.bagian === "string") {
+            bagianInput.value = json.paket.bagian || "";
+          }
+
+          cacheSoal = {};
+          (json.soal || []).forEach(s=>{
+            const no = parseInt(s.nomor,10);
+            cacheSoal[no] = {
+              pertanyaan: s.pertanyaan || "",
+              a: s.opsi_a || "",
+              b: s.opsi_b || "",
+              c: s.opsi_c || "",
+              d: s.opsi_d || "",
+              jawaban: s.jawaban || ""
+            };
+          });
+          nomorActive.value = "1";
+          loadDraft(1);
+          buildNumbers();
+
+          setMode("manual");
+        }
+      }catch(e){}
+
+      modal.show();
+    });
+  });
+
+  function isJudulValid(judul){
+    const t = (judul || "").trim();
+    if(t.length === 0) return false;
+    if(t.length > 45) return false;
+    const re = /^[A-Za-z0-9 .,:\?]+$/;
+    return re.test(t);
+  }
+
+  document.getElementById("kuisForm").addEventListener("submit", (e)=>{
+    const judul = judulPaketInput.value || "";
+    if(!isJudulValid(judul)){
+      e.preventDefault();
+      alert("Judul tidak sesuai aturan.\n- Maksimal 45 karakter (termasuk spasi)\n- Hanya boleh: huruf, angka, spasi, titik (.), koma (,), titik dua (:), tanda tanya (?)");
+      return;
     }
 
-    window.onbeforeunload = function(e) {
-        if (!isNavigatingInternal) {
-            e.preventDefault();
-            return "Apakah Anda yakin ingin meninggalkan kuis?";
-        }
-    };
+    if(currentMode === "csv"){
+      actionInput.value = "csv_import";
+      return;
+    }
+    saveDraft();
+    actionInput.value = "soal_save_bulk";
+    bulkJsonInput.value = JSON.stringify(cacheSoal);
+  });
+
+  resetForm();
 </script>
+
+<?php include 'footer.php'; ?>
 
 </body>
 </html>
