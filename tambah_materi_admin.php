@@ -7,28 +7,7 @@ if (empty($_SESSION["admin"])) {
   exit;
 }
 
-$DB_HOST = "localhost";
-$DB_NAME = "sinau_pemilu";
-$DB_USER = "root";
-$DB_PASS = "";
-
-$UPLOAD_DIR = __DIR__ . "/uploads/materi";
-$UPLOAD_URL = "uploads/materi";
-
-if (!is_dir($UPLOAD_DIR)) { @mkdir($UPLOAD_DIR, 0775, true); }
-
-function db(): PDO {
-  global $DB_HOST, $DB_NAME, $DB_USER, $DB_PASS;
-  static $pdo = null;
-  if ($pdo) return $pdo;
-
-  $dsn = "mysql:host={$DB_HOST};dbname={$DB_NAME};charset=utf8mb4";
-  $pdo = new PDO($dsn, $DB_USER, $DB_PASS, [
-    PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
-    PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
-  ]);
-  return $pdo;
-}
+require_once 'db.php';
 
 $BAGIAN_OPTIONS = [
   'Keuangan',
@@ -54,7 +33,6 @@ try {
     AFTER judul
   ");
 } catch (Throwable $e) {
-  // kolom sudah ada -> abaikan
 }
 
 function safe_name(string $ext): string {
@@ -67,12 +45,48 @@ function count_pdf_pages(string $pdfPath): int {
   if (is_string($pdfinfo) && $pdfinfo !== "" && preg_match('/Pages:\s+(\d+)/i', $pdfinfo, $m)) {
     return (int)$m[1];
   }
+
   $content = @file_get_contents($pdfPath);
   if (is_string($content) && $content !== "") {
     $n = preg_match_all("/\/Type\s*\/Page\b/", $content);
     if ($n > 0) return (int)$n;
   }
   return 1;
+}
+
+function validate_judul_or_throw(string $judul): void {
+  $len = mb_strlen($judul, 'UTF-8');
+  if ($len > 45) {
+    throw new RuntimeException("Judul maksimal 45 karakter (termasuk spasi).");
+  }
+
+  if (!preg_match('/^[A-Za-z0-9\.\,\:\?\s]+$/', $judul)) {
+    throw new RuntimeException("Judul hanya boleh berisi huruf, angka, spasi, titik (.), koma (,), titik dua (:), dan tanda tanya (?).");
+  }
+}
+
+function friendly_error_message(string $msg): ?string {
+  $allowed = [
+    "Judul wajib diisi.",
+    "Judul maksimal 45 karakter (termasuk spasi).",
+    "Judul hanya boleh berisi huruf, angka, spasi, titik (.), koma (,), titik dua (:), dan tanda tanya (?).",
+    "Materi hanya boleh dalam bentuk PDF.",
+    "Silakan pilih file PDF.",
+    "File wajib diupload.",
+    "Upload gagal.",
+    "Ukuran file terlalu besar (maks 500KB).",
+    "Tipe file tidak sesuai (wajib PDF).",
+    "File tidak valid (bukan PDF).",
+    "Gagal menyimpan file.",
+    "ID tidak valid.",
+    "Materi tidak ditemukan."
+  ];
+
+  if (in_array($msg, $allowed, true)) return $msg;
+
+  if (stripos($msg, "SQLSTATE") !== false) return null;
+
+  return null;
 }
 
 function upload_one_pdf(array $file, int $maxBytes, string $destDir): array {
@@ -96,12 +110,16 @@ function upload_one_pdf(array $file, int $maxBytes, string $destDir): array {
 
 function remove_media_files(int $materiId): void {
   global $UPLOAD_DIR;
+
   $st = db()->prepare("SELECT file_path FROM materi_media WHERE materi_id=?");
   $st->execute([$materiId]);
+
   foreach ($st->fetchAll() as $f) {
-    $p = $UPLOAD_DIR . "/" . $f["file_path"];
+    $pdf = (string)$f["file_path"];
+    $p = $UPLOAD_DIR . "/" . $pdf;
     if (is_file($p)) @unlink($p);
   }
+
   db()->prepare("DELETE FROM materi_media WHERE materi_id=?")->execute([$materiId]);
 }
 
@@ -119,6 +137,8 @@ try {
       $mode   = (string)($_POST["mode"] ?? "pdf");
 
       if ($judul === "") throw new RuntimeException("Judul wajib diisi.");
+      validate_judul_or_throw($judul);
+
       if ($mode !== "pdf") throw new RuntimeException("Materi hanya boleh dalam bentuk PDF.");
 
       if ($bagian === "" || !in_array($bagian, $BAGIAN_OPTIONS, true)) {
@@ -139,7 +159,7 @@ try {
         $st->execute([$materiId]);
         $row = $st->fetch();
         if (!$row) throw new RuntimeException("Materi tidak ditemukan.");
-        if ((string)$row["tipe"] !== "pdf") throw new RuntimeException("Tipe materi tidak valid di database.");
+        if ((string)$row["tipe"] !== "pdf") throw new RuntimeException("Materi hanya boleh dalam bentuk PDF.");
 
         db()->prepare("UPDATE materi SET judul=?, bagian=? WHERE id=?")
           ->execute([$judul, $bagian, $materiId]);
@@ -150,7 +170,7 @@ try {
 
       if ($shouldReplaceMedia) {
         if (!$hasNewPdf) throw new RuntimeException("Silakan pilih file PDF.");
-
+        
         remove_media_files($materiId);
 
         [$ok,$fn,$err] = upload_one_pdf($_FILES["pdf"] ?? [], 500*1024, $UPLOAD_DIR);
@@ -167,8 +187,8 @@ try {
 
       db()->commit();
 
-      if ($action === "add") $toast = ["type"=>"success","msg"=>"Berhasil menambahkan " . $judul];
-      else $toast = ["type"=>"success","msg"=>"Berhasil memperbarui " . $judul];
+      if ($action === "add") $toast = ["type"=>"success","msg"=>"Berhasil menambahkan materi: " . $judul];
+      else $toast = ["type"=>"success","msg"=>"Berhasil memperbarui materi: " . $judul];
     }
 
     if ($action === "delete") {
@@ -184,9 +204,13 @@ try {
 } catch (Throwable $e) {
   if (db()->inTransaction()) db()->rollBack();
 
-  $reason = $e->getMessage();
-  if ($lastAction === "edit") $toast = ["type"=>"danger","msg"=>"Gagal memperbarui materi karena " . $reason];
-  else $toast = ["type"=>"danger","msg"=>"Gagal menambahkan materi karena " . $reason];
+  $friendly = friendly_error_message($e->getMessage());
+
+  if ($lastAction === "edit") {
+    $toast = ["type"=>"danger","msg"=> $friendly ? ("Gagal memperbarui materi. " . $friendly) : "Gagal memperbarui materi. Silakan coba lagi."];
+  } else {
+    $toast = ["type"=>"danger","msg"=> $friendly ? ("Gagal menambahkan materi. " . $friendly) : "Gagal menambahkan materi. Silakan coba lagi."];
+  }
 }
 
 $rows = db()->query("SELECT * FROM materi ORDER BY id DESC")->fetchAll();
@@ -302,6 +326,9 @@ foreach ($st->fetchAll() as $m) {
       font-size:16px;color:#111;
     }
 
+    .col-judul{ padding-right:0.3cm; }
+    .col-bagian{ padding-left:0.3cm; }
+
     .cell-center{text-align:center;}
 
     .icon-btn{
@@ -314,6 +341,14 @@ foreach ($st->fetchAll() as $m) {
     .icon-edit,.icon-trash{color:var(--maroon);font-size:22px;}
 
     .label-plain{font-weight:600;font-size:14px;color:#111;margin-bottom:8px;}
+    .judul-note{
+      font-style:italic;
+      font-weight:300;
+      font-size:12px;
+      color:#333;
+      margin-bottom:8px;
+    }
+
     .input-pill{
       border:2px solid #111;border-radius:999px;
       padding:10px 18px;font-size:13px;outline:none;width:min(520px,100%);
@@ -348,26 +383,6 @@ foreach ($st->fetchAll() as $m) {
       background:#fff;
       max-height:70vh;
       overflow:auto;
-    }
-
-    .pdf-preview-box{
-      margin-top:12px;background:#d9d9d9;border-radius:18px;padding:14px;
-    }
-    .pdf-meta{
-      display:flex;align-items:center;justify-content:space-between;gap:10px;
-      margin-bottom:10px;color:#111;font-size:12px;font-weight:800;
-    }
-    .pdf-canvas-wrap{
-      background:#fff;border-radius:14px;overflow:hidden;
-      box-shadow:0 10px 18px rgba(0,0,0,.10);
-    }
-    #pdfCanvas{display:block;width:100%;height:auto;}
-    .pdf-fallback{
-      width:100%;
-      height:360px;
-      border:0;
-      display:none;
-      background:#fff;
     }
 
     .dropzone{
@@ -415,6 +430,7 @@ foreach ($st->fetchAll() as $m) {
       .modal-subtitle-custom{font-size:12px;}
       .modal-body{padding:14px 14px 16px;}
       .label-plain{font-size:13px;}
+      .judul-note{font-size:11px;}
       .input-pill{font-size:13px;padding:9px 14px;}
       .btn-save{font-size:12px;padding:10px 18px;border-radius:12px;}
       .dropzone{height:140px;}
@@ -472,8 +488,8 @@ foreach ($st->fetchAll() as $m) {
     <div class="table-scroll">
       <div class="table-head table-grid">
         <div></div>
-        <div class="text">JUDUL MATERI</div>
-        <div class="text">BAGIAN</div>
+        <div class="text col-judul">JUDUL MATERI</div>
+        <div class="text col-bagian">BAGIAN</div>
         <div class="text-center">JUMLAH SLIDE</div>
         <div></div>
       </div>
@@ -497,8 +513,8 @@ foreach ($st->fetchAll() as $m) {
             </button>
           </div>
 
-          <div><?= htmlspecialchars((string)$r["judul"]) ?></div>
-          <div><?= htmlspecialchars($bagian) ?></div>
+          <div class="col-judul"><?= htmlspecialchars((string)$r["judul"]) ?></div>
+          <div class="col-bagian"><?= htmlspecialchars($bagian) ?></div>
           <div class="cell-center"><?= (int)$r["jumlah_slide"] ?></div>
 
           <div class="cell-center">
@@ -518,7 +534,6 @@ foreach ($st->fetchAll() as $m) {
   </section>
 </main>
 
-<!-- MODAL -->
 <div class="modal fade" id="materiModal" tabindex="-1" aria-hidden="true">
   <div class="modal-dialog modal-dialog-centered">
     <form class="modal-content" id="materiForm" method="post" enctype="multipart/form-data">
@@ -533,8 +548,20 @@ foreach ($st->fetchAll() as $m) {
         <input type="hidden" name="id" id="idInput" value="">
         <input type="hidden" name="mode" id="modeInput" value="pdf">
 
+        <div class="judul-note">
+          Aturan judul: maksimal 45 karakter (termasuk spasi). Hanya boleh huruf, angka, spasi, titik (.), koma (,), titik dua (:), dan tanda tanya (?).
+        </div>
+
         <div class="label-plain">Judul Materi</div>
-        <input class="input-pill" name="judul" id="judulInput" type="text" placeholder="Tuliskan judul materi di sini..." required>
+        <input
+          class="input-pill"
+          name="judul"
+          id="judulInput"
+          type="text"
+          placeholder="Tuliskan judul materi di sini..."
+          maxlength="45"
+          required
+        >
 
         <div class="label-plain mt-3">Bagian</div>
         <select class="input-pill" name="bagian" id="bagianInput" required>
@@ -550,25 +577,10 @@ foreach ($st->fetchAll() as $m) {
 
         <input id="pdfPicker" name="pdf" type="file" accept="application/pdf" class="d-none">
 
-        <div class="pdf-preview-box" id="pdfPreviewBox" style="display:none;">
-          <div class="pdf-meta">
-            <div id="pdfName" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:420px;"></div>
-            <button type="button" class="btn btn-sm btn-light" id="btnChangePdf" style="border-radius:999px;font-weight:900;">
-              Ganti PDF
-            </button>
-          </div>
-
-          <div class="pdf-canvas-wrap" id="canvasWrap">
-            <canvas id="pdfCanvas"></canvas>
-          </div>
-
-          <iframe id="pdfFallback" class="pdf-fallback" title="Preview PDF"></iframe>
-        </div>
-
         <div class="dropzone" id="dropzone">
           <div>
             <div class="dz-icon"><i class="bi bi-file-earmark-pdf"></i></div>
-            <div class="dz-text">Klik atau seret file PDF ke sini</div>
+            <div class="dz-text" id="dzText">Klik atau seret file PDF ke sini</div>
           </div>
         </div>
 
@@ -581,12 +593,9 @@ foreach ($st->fetchAll() as $m) {
 </div>
 
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/pdfjs-dist@4.10.38/build/pdf.min.js"></script>
 
 <script>
 (function(){
-  const UPLOAD_URL = <?= json_encode($UPLOAD_URL) ?>;
-
   const materiModalEl = document.getElementById('materiModal');
   const btnOpenAdd = document.getElementById('btnOpenAdd');
   const modalTitle = document.getElementById('modalTitle');
@@ -597,20 +606,12 @@ foreach ($st->fetchAll() as $m) {
 
   const pdfPicker = document.getElementById('pdfPicker');
   const dropzone = document.getElementById('dropzone');
-
-  const pdfPreviewBox = document.getElementById('pdfPreviewBox');
-  const pdfName = document.getElementById('pdfName');
-  const btnChangePdf = document.getElementById('btnChangePdf');
-  const pdfCanvas = document.getElementById('pdfCanvas');
-  const canvasWrap = document.getElementById('canvasWrap');
-  const pdfFallback = document.getElementById('pdfFallback');
+  const dzText = document.getElementById('dzText');
 
   const materiForm = document.getElementById('materiForm');
-
   const materiModal = new bootstrap.Modal(materiModalEl, { backdrop: true, keyboard: true });
 
   let currentAction = "add";
-  let existingPdfFilename = "";
 
   function setFileToInput(file){
     const dt = new DataTransfer();
@@ -625,109 +626,17 @@ foreach ($st->fetchAll() as $m) {
     return "";
   }
 
-  function setDropzoneVisibility() {
-    if (currentAction === "edit") {
-      dropzone.style.display = "none";
-    } else {
-      dropzone.style.display = "flex";
+  function validateJudul(val){
+    const judul = (val || "").trim();
+
+    if(judul.length === 0) return "Judul wajib diisi.";
+    if(judul.length > 45) return "Judul maksimal 45 karakter (termasuk spasi).";
+
+    const re = /^[A-Za-z0-9\.\,\:\?\s]+$/;
+    if(!re.test(judul)){
+      return "Judul hanya boleh berisi huruf, angka, spasi, titik (.), koma (,), titik dua (:), dan tanda tanya (?).";
     }
-  }
-
-  function showPreviewBox(name){
-    pdfPreviewBox.style.display = "block";
-    pdfName.textContent = name || "";
-  }
-
-  function clearCanvas(){
-    const ctx = pdfCanvas.getContext("2d");
-    ctx.clearRect(0, 0, pdfCanvas.width, pdfCanvas.height);
-  }
-
-  function hidePreviewBox(){
-    pdfPreviewBox.style.display = "none";
-    pdfName.textContent = "";
-    existingPdfFilename = "";
-    clearCanvas();
-    pdfFallback.style.display = "none";
-    pdfFallback.src = "";
-    canvasWrap.style.display = "block";
-  }
-
-  async function renderCoverWithPdfJsFromArrayBuffer(buf){
-    if(typeof window.pdfjsLib === "undefined") return false;
-
-    try{
-      window.pdfjsLib.GlobalWorkerOptions.workerSrc =
-        "https://cdn.jsdelivr.net/npm/pdfjs-dist@4.10.38/build/pdf.worker.min.js";
-
-      const pdf = await window.pdfjsLib.getDocument({data: buf}).promise;
-      const page = await pdf.getPage(1);
-
-      const baseViewport = page.getViewport({ scale: 1 });
-      const targetWidth = Math.min(640, pdfPreviewBox.clientWidth - 28);
-      const scale = targetWidth / baseViewport.width;
-      const viewport = page.getViewport({ scale });
-
-      const ctx = pdfCanvas.getContext("2d");
-      pdfCanvas.width = Math.floor(viewport.width);
-      pdfCanvas.height = Math.floor(viewport.height);
-
-      await page.render({ canvasContext: ctx, viewport }).promise;
-      return true;
-    }catch(e){
-      return false;
-    }
-  }
-
-  async function renderCoverWithPdfJsFromUrl(url){
-    if(typeof window.pdfjsLib === "undefined") return false;
-
-    try{
-      window.pdfjsLib.GlobalWorkerOptions.workerSrc =
-        "https://cdn.jsdelivr.net/npm/pdfjs-dist@4.10.38/build/pdf.worker.min.js";
-
-      const pdf = await window.pdfjsLib.getDocument(url).promise;
-      const page = await pdf.getPage(1);
-
-      const baseViewport = page.getViewport({ scale: 1 });
-      const targetWidth = Math.min(640, pdfPreviewBox.clientWidth - 28);
-      const scale = targetWidth / baseViewport.width;
-      const viewport = page.getViewport({ scale });
-
-      const ctx = pdfCanvas.getContext("2d");
-      pdfCanvas.width = Math.floor(viewport.width);
-      pdfCanvas.height = Math.floor(viewport.height);
-
-      await page.render({ canvasContext: ctx, viewport }).promise;
-      return true;
-    }catch(e){
-      return false;
-    }
-  }
-
-  function renderFallbackIframe(url){
-    canvasWrap.style.display = "none";
-    pdfFallback.style.display = "block";
-    pdfFallback.src = url + "#page=1&zoom=page-width";
-  }
-
-  async function handlePdfSelect(file){
-    const msg = validatePdfFile(file);
-    if(msg){ alert(msg); return; }
-
-    setFileToInput(file);
-    showPreviewBox(file.name);
-
-    const buf = await file.arrayBuffer();
-    const ok = await renderCoverWithPdfJsFromArrayBuffer(buf);
-    if(!ok){
-      const blobUrl = URL.createObjectURL(file);
-      renderFallbackIframe(blobUrl);
-    }else{
-      pdfFallback.style.display = "none";
-      pdfFallback.src = "";
-      canvasWrap.style.display = "block";
-    }
+    return "";
   }
 
   function resetModal(){
@@ -736,8 +645,7 @@ foreach ($st->fetchAll() as $m) {
     actionInput.value = "add";
     idInput.value = "";
     pdfPicker.value = "";
-    hidePreviewBox();
-    setDropzoneVisibility();
+    dzText.textContent = "Klik atau seret file PDF ke sini";
   }
 
   btnOpenAdd.addEventListener('click', () => {
@@ -748,65 +656,53 @@ foreach ($st->fetchAll() as $m) {
   });
 
   document.querySelectorAll('.btn-edit').forEach(btn => {
-    btn.addEventListener('click', async () => {
+    btn.addEventListener('click', () => {
       currentAction = "edit";
       modalTitle.textContent = "Edit Materi";
 
-      resetModal();                 // reset dulu
+      resetModal();
       actionInput.value = "edit";
       idInput.value = btn.dataset.id || "";
       judulInput.value = btn.dataset.judul || "";
 
       const bagian = btn.dataset.bagian || "";
       if (bagian) bagianInput.value = bagian;
-      
-      setDropzoneVisibility();
 
-      existingPdfFilename = btn.dataset.pdf || "";
-      if(existingPdfFilename){
-        showPreviewBox(existingPdfFilename);
-        const url = `${UPLOAD_URL}/${existingPdfFilename}`;
-
-        const ok = await renderCoverWithPdfJsFromUrl(url);
-        if(!ok){
-          renderFallbackIframe(url);
-        }else{
-          pdfFallback.style.display = "none";
-          pdfFallback.src = "";
-          canvasWrap.style.display = "block";
-        }
-      } else {
-        // kalau ternyata materi belum punya pdf (kasus jarang), dropzone boleh tampil biar bisa upload
-        dropzone.style.display = "flex";
-      }
+      const existingPdf = btn.dataset.pdf || "";
+      dzText.textContent = existingPdf
+        ? `PDF saat ini: ${existingPdf} (klik untuk ganti jika perlu)`
+        : "Klik untuk pilih PDF (wajib jika belum ada)";
 
       materiModal.show();
     });
   });
+
+  function handlePdfSelect(file){
+    const msg = validatePdfFile(file);
+    if(msg){ alert(msg); return; }
+    setFileToInput(file);
+    dzText.textContent = `File dipilih: ${file.name}`;
+  }
 
   pdfPicker.addEventListener('change', () => {
     const f = (pdfPicker.files || [])[0];
     if(f) handlePdfSelect(f);
   });
 
-  // ✅ tombol ganti pdf tetap bisa dipakai, tanpa perlu dropzone muncul
-  btnChangePdf.addEventListener('click', () => pdfPicker.click());
-
-  // ✅ dropzone hanya aktif saat ADD (karena saat EDIT dropzone disembunyikan)
   dropzone.addEventListener('click', () => {
-    if (currentAction !== "edit") pdfPicker.click();
+    pdfPicker.click();
   });
+
   dropzone.addEventListener('dragover', (e) => {
-    if (currentAction === "edit") return;
     e.preventDefault();
     dropzone.classList.add('dragover');
   });
+
   dropzone.addEventListener('dragleave', () => {
-    if (currentAction === "edit") return;
     dropzone.classList.remove('dragover');
   });
+
   dropzone.addEventListener('drop', (e) => {
-    if (currentAction === "edit") return;
     e.preventDefault();
     dropzone.classList.remove('dragover');
     const f = (e.dataTransfer.files || [])[0];
@@ -814,6 +710,13 @@ foreach ($st->fetchAll() as $m) {
   });
 
   materiForm.addEventListener("submit", (e) => {
+    const judulMsg = validateJudul(judulInput.value);
+    if(judulMsg){
+      e.preventDefault();
+      alert(judulMsg);
+      return;
+    }
+
     const hasPdf = (pdfPicker.files && pdfPicker.files.length > 0);
 
     if(currentAction === "add" && !hasPdf){
@@ -837,10 +740,6 @@ foreach ($st->fetchAll() as $m) {
       return;
     }
   });
-
-  // init
-  setDropzoneVisibility();
-
 })();
 </script>
 
