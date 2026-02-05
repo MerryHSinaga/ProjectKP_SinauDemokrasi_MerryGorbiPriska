@@ -6,6 +6,17 @@ if (empty($_SESSION["admin"])) {
   header("Location: login_admin.php");
   exit;
 }
+
+if ($_SERVER["REQUEST_METHOD"] === "POST" && (string)($_POST["action"] ?? "") === "logout") {
+  $_SESSION = [];
+  if (ini_get("session.use_cookies")) {
+    $p = session_get_cookie_params();
+    setcookie(session_name(), "", time() - 42000, $p["path"], $p["domain"], (bool)$p["secure"], (bool)$p["httponly"]);
+  }
+  session_destroy();
+  header("Location: login_admin.php");
+  exit;
+}
 ?>
 <!doctype html>
 <html lang="id">
@@ -83,18 +94,16 @@ if (empty($_SESSION["admin"])) {
     }
 
     .title{
-    text-align:center;
-    margin:10px 0 60px;
-    font-weight:900;
-    font-size:42px;
-
-    background: linear-gradient(90deg, #8B0000, #E02727, #750000);
-    -webkit-background-clip: text;
-    -webkit-text-fill-color: transparent;
-    background-clip: text;
-    color: transparent;
-  }
-
+      text-align:center;
+      margin:10px 0 60px;
+      font-weight:900;
+      font-size:42px;
+      background: linear-gradient(90deg, #8B0000, #E02727, #750000);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+      color: transparent;
+    }
 
     .grid{
       display:grid;
@@ -105,7 +114,6 @@ if (empty($_SESSION["admin"])) {
       padding-bottom:30px;
     }
 
-    /* ===== CARD: SHADOW HANYA DI BAWAH ===== */
     .choice-card{
       background:#fff;
       border-radius:16px;
@@ -136,7 +144,6 @@ if (empty($_SESSION["admin"])) {
       transform:scale(1.06);
     }
 
-    /* ===== BUTTON TANPA SHADOW ===== */
     .choice-btn{
       background:var(--maroon);
       color:#fff;
@@ -160,11 +167,76 @@ if (empty($_SESSION["admin"])) {
       transform:translateY(3px);
     }
 
+    .btn-logout{
+      border:0;
+      background:transparent;
+      color:#fff;
+      font-weight:500;
+      padding:0;
+    }
+
+    .modal-overlay{
+      position:fixed;
+      inset:0;
+      background:rgba(0,0,0,.6);
+      display:none;
+      align-items:center;
+      justify-content:center;
+      z-index:9999;
+    }
+
+    .modal-content-custom{
+      background:#fff;
+      padding:26px;
+      border-radius:18px;
+      width:360px;
+      text-align:center;
+      box-shadow:0 18px 34px rgba(0,0,0,.25);
+    }
+
+    .btn-modal-action{
+      border:0;
+      border-radius:20px;
+      padding:6px 22px;
+      font-weight:600;
+      background:var(--maroon);
+      color:#fff;
+    }
+    .btn-modal-cancel{
+      border:0;
+      border-radius:20px;
+      padding:6px 22px;
+      font-weight:600;
+      background:#e9e9e9;
+      color:#111;
+    }
+    .popup-title{
+      font-weight:900;
+      font-size:16px;
+      margin:0 0 8px 0;
+      color:#111;
+    }
+    .popup-message{
+      font-size:13px;
+      color:#333;
+      margin:0 0 18px 0;
+      line-height:1.45;
+      white-space:pre-wrap;
+    }
+    .popup-actions{
+      display:flex;
+      gap:10px;
+      justify-content:center;
+      flex-wrap:wrap;
+      margin-top:6px;
+    }
+
     @media (max-width: 992px){
       .grid{grid-template-columns:1fr;gap:26px}
       .choice-card{width:min(420px,100%); margin:0 auto;}
       .title{font-size:36px; margin-bottom:34px;}
       .page{padding-top:120px;}
+      .modal-content-custom{width:min(360px, 92vw);}
     }
   </style>
 </head>
@@ -180,7 +252,12 @@ if (empty($_SESSION["admin"])) {
     </a>
 
     <ul class="navbar-nav flex-row gap-5 align-items-center">
-      <li class="nav-item"><a class="nav-link nav-hover" href="login_admin.php">LOGOUT</a></li>
+      <li class="nav-item">
+        <form method="post" id="logoutForm" class="m-0">
+          <input type="hidden" name="action" value="logout">
+          <button type="submit" class="nav-link nav-hover btn-logout" id="btnLogout">LOGOUT</button>
+        </form>
+      </li>
     </ul>
   </div>
 </nav>
@@ -201,7 +278,97 @@ if (empty($_SESSION["admin"])) {
   </section>
 </main>
 
+<div class="modal-overlay" id="popupOverlay" aria-hidden="true">
+  <div class="modal-content-custom" role="dialog" aria-modal="true" aria-labelledby="popupTitle">
+    <p class="popup-title" id="popupTitle">Konfirmasi</p>
+    <p class="popup-message" id="popupMessage">Pesan</p>
+    <div class="popup-actions" id="popupActions"></div>
+  </div>
+</div>
+
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+
+<script>
+(function(){
+  const popupOverlay = document.getElementById('popupOverlay');
+  const popupTitle   = document.getElementById('popupTitle');
+  const popupMessage = document.getElementById('popupMessage');
+  const popupActions = document.getElementById('popupActions');
+
+  let popupLocked = false;
+
+  function closePopup(){
+    popupOverlay.style.display = "none";
+    popupOverlay.setAttribute("aria-hidden","true");
+    popupActions.innerHTML = '';
+    popupLocked = false;
+  }
+
+  function openPopup({ title="Konfirmasi", message="", okText="OK", cancelText="", onOk=null, onCancel=null }){
+    if (popupLocked) return;
+    popupLocked = true;
+
+    popupTitle.textContent = title;
+    popupMessage.textContent = message;
+    popupActions.innerHTML = '';
+
+    if (cancelText) {
+      const btnCancel = document.createElement('button');
+      btnCancel.type = "button";
+      btnCancel.className = "btn-modal-cancel";
+      btnCancel.textContent = cancelText;
+      btnCancel.addEventListener('click', () => {
+        closePopup();
+        if (typeof onCancel === "function") onCancel();
+      });
+      popupActions.appendChild(btnCancel);
+    }
+
+    const btnOk = document.createElement('button');
+    btnOk.type = "button";
+    btnOk.className = "btn-modal-action";
+    btnOk.textContent = okText;
+    btnOk.addEventListener('click', () => {
+      closePopup();
+      if (typeof onOk === "function") onOk();
+    });
+    popupActions.appendChild(btnOk);
+
+    popupOverlay.style.display = "flex";
+    popupOverlay.setAttribute("aria-hidden","false");
+  }
+
+  popupOverlay.addEventListener('click', (e) => {
+    if (e.target === popupOverlay) {
+      const hasCancel = popupActions.querySelector('.btn-modal-cancel');
+      if (!hasCancel) closePopup();
+    }
+  });
+
+  document.addEventListener('keydown', (e) => {
+    if (e.key === "Escape" && popupOverlay.style.display === "flex") {
+      const hasCancel = popupActions.querySelector('.btn-modal-cancel');
+      if (!hasCancel) closePopup();
+    }
+  });
+
+  const logoutForm = document.getElementById('logoutForm');
+  const btnLogout  = document.getElementById('btnLogout');
+
+  if (logoutForm && btnLogout) {
+    btnLogout.addEventListener('click', (e) => {
+      e.preventDefault();
+      openPopup({
+        title: "Konfirmasi",
+        message: "Yakin ingin logout?",
+        okText: "Logout",
+        cancelText: "Batal",
+        onOk: () => logoutForm.submit()
+      });
+    });
+  }
+})();
+</script>
 
 <?php include 'footer.php'; ?>
 
