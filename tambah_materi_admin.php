@@ -70,7 +70,6 @@ function validate_judul_or_throw(string $judul): void {
   if ($len > 45) {
     throw new RuntimeException("Judul maksimal 45 karakter (termasuk spasi).");
   }
-
   if (!preg_match('/^[A-Za-z0-9\.\,\:\?\s]+$/', $judul)) {
     throw new RuntimeException("Judul hanya boleh berisi huruf, angka, spasi, titik (.), koma (,), titik dua (:), dan tanda tanya (?).");
   }
@@ -194,6 +193,17 @@ try {
     $action = (string)($_POST["action"] ?? "");
     $lastAction = $action;
 
+    if ($action === "logout") {
+      $_SESSION = [];
+      if (ini_get("session.use_cookies")) {
+        $p = session_get_cookie_params();
+        setcookie(session_name(), "", time() - 42000, $p["path"], $p["domain"], (bool)$p["secure"], (bool)$p["httponly"]);
+      }
+      session_destroy();
+      header("Location: login_admin.php");
+      exit;
+    }
+
     if ($action === "add" || $action === "edit") {
       $judul  = trim((string)($_POST["judul"] ?? ""));
       $bagian = trim((string)($_POST["bagian"] ?? ""));
@@ -271,6 +281,8 @@ try {
 
   if ($lastAction === "edit") {
     $toast = ["type"=>"danger","msg"=> $friendly ? ("Gagal memperbarui materi. " . $friendly) : "Gagal memperbarui materi. Silakan coba lagi."];
+  } elseif ($lastAction === "delete") {
+    $toast = ["type"=>"danger","msg"=> $friendly ? ("Gagal menghapus materi. " . $friendly) : "Gagal menghapus materi. Silakan coba lagi."];
   } else {
     $toast = ["type"=>"danger","msg"=> $friendly ? ("Gagal menambahkan materi. " . $friendly) : "Gagal menambahkan materi. Silakan coba lagi."];
   }
@@ -473,13 +485,6 @@ foreach ($st->fetchAll() as $m) {
     .btn-back:hover{filter:brightness(1.05);transform:translateY(-1px);}
     .btn-back i{font-size:22px;line-height:1;}
 
-    .pdf-edit-row{
-      display:flex;
-      align-items:center;
-      justify-content:flex-end;
-      gap:12px;
-      margin-top:12px;
-    }
     .btn-edit-pdf{
       border:0;
       background:var(--maroon);
@@ -497,6 +502,90 @@ foreach ($st->fetchAll() as $m) {
     }
     .btn-edit-pdf:hover{filter:brightness(.95);transform:translateY(1px);}
     .btn-edit-pdf:active{transform:translateY(2px);}
+
+    .pdf-preview-header{
+      display:flex;
+      align-items:flex-end;
+      justify-content:space-between;
+      gap:12px;
+      flex-wrap:wrap;
+    }
+    .pdf-preview-title{
+      font-weight:800;
+      font-size:14px;
+      margin:0;
+      line-height:1.2;
+    }
+    .pdf-preview-subtitle{
+      font-style:italic;
+      font-size:12px;
+      margin-top:4px;
+      margin-bottom:0;
+    }
+
+    .modal-overlay{
+      position:fixed;
+      inset:0;
+      background:rgba(0,0,0,.6);
+      display:none;
+      align-items:center;
+      justify-content:center;
+      z-index:9999;
+    }
+
+    .modal-content-custom{
+      background:#fff;
+      padding:26px;
+      border-radius:18px;
+      width:360px;
+      text-align:center;
+      box-shadow:0 18px 34px rgba(0,0,0,.25);
+    }
+
+    .btn-modal-action{
+      border:0;
+      border-radius:20px;
+      padding:6px 22px;
+      font-weight:600;
+      background:var(--maroon);
+      color:#fff;
+    }
+    .btn-modal-cancel{
+      border:0;
+      border-radius:20px;
+      padding:6px 22px;
+      font-weight:600;
+      background:#e9e9e9;
+      color:#111;
+    }
+    .popup-title{
+      font-weight:900;
+      font-size:16px;
+      margin:0 0 8px 0;
+      color:#111;
+    }
+    .popup-message{
+      font-size:13px;
+      color:#333;
+      margin:0 0 18px 0;
+      line-height:1.45;
+      white-space:pre-wrap;
+    }
+    .popup-actions{
+      display:flex;
+      gap:10px;
+      justify-content:center;
+      flex-wrap:wrap;
+      margin-top:6px;
+    }
+
+    .btn-logout{
+      border:0;
+      background:transparent;
+      color:#fff;
+      font-weight:500;
+      padding:0;
+    }
 
     @media (max-width: 576px){
       body{font-size:13px;}
@@ -519,6 +608,7 @@ foreach ($st->fetchAll() as $m) {
       .dropzone .dz-icon{font-size:40px;}
       .dropzone .dz-text{font-size:12px;}
       .table-grid{min-width:980px;}
+      .modal-content-custom{width:min(360px, 92vw);}
     }
   </style>
 </head>
@@ -541,7 +631,10 @@ foreach ($st->fetchAll() as $m) {
 
     <ul class="navbar-nav flex-row gap-5 align-items-center">
       <li class="nav-item">
-        <a class="nav-link nav-hover" href="login_admin.php">LOGOUT</a>
+        <form method="post" id="logoutForm" class="m-0">
+          <input type="hidden" name="action" value="logout">
+          <button type="submit" class="nav-link nav-hover btn-logout" id="btnLogout">LOGOUT</button>
+        </form>
       </li>
     </ul>
   </div>
@@ -600,7 +693,7 @@ foreach ($st->fetchAll() as $m) {
           <div class="cell-center"><?= (int)$r["jumlah_slide"] ?></div>
 
           <div class="cell-center">
-            <form method="post" onsubmit="return confirm('Yakin hapus materi ini?')">
+            <form method="post" class="form-delete">
               <input type="hidden" name="action" value="delete">
               <input type="hidden" name="id" value="<?= $rid ?>">
               <button class="icon-btn" type="submit" title="Hapus">
@@ -615,6 +708,14 @@ foreach ($st->fetchAll() as $m) {
     </div>
   </section>
 </main>
+
+<div class="modal-overlay" id="popupOverlay" aria-hidden="true">
+  <div class="modal-content-custom" role="dialog" aria-modal="true" aria-labelledby="popupTitle">
+    <p class="popup-title" id="popupTitle">Info</p>
+    <p class="popup-message" id="popupMessage">Pesan</p>
+    <div class="popup-actions" id="popupActions"></div>
+  </div>
+</div>
 
 <div class="modal fade" id="materiModal" tabindex="-1" aria-hidden="true">
   <div class="modal-dialog modal-dialog-centered">
@@ -661,13 +762,6 @@ foreach ($st->fetchAll() as $m) {
 
         <input id="pdfPicker" name="pdf" type="file" accept="application/pdf" class="d-none">
 
-        <div class="pdf-edit-row" id="pdfEditRow" style="display:none;">
-          <button type="button" class="btn-edit-pdf" id="btnEditPdf">
-            <i class="bi bi-pencil-square"></i>
-            <span>Edit PDF</span>
-          </button>
-        </div>
-
         <div class="dropzone" id="dropzone">
           <div>
             <div class="dz-icon"><i class="bi bi-file-earmark-pdf"></i></div>
@@ -676,8 +770,17 @@ foreach ($st->fetchAll() as $m) {
         </div>
 
         <div class="mt-3" id="pdfPreviewWrap" style="display:none;">
-          <div style="font-weight:800;font-size:14px;">Preview PDF</div>
-          <div style="font-style:italic;font-size:12px;">(tampilan cepat untuk admin)</div>
+          <div class="pdf-preview-header">
+            <div>
+              <p class="pdf-preview-title">Preview PDF</p>
+              <p class="pdf-preview-subtitle">(tampilan cepat untuk admin)</p>
+            </div>
+
+            <button type="button" class="btn-edit-pdf" id="btnEditPdf" style="display:none;">
+              <i class="bi bi-pencil-square"></i>
+              <span>Edit PDF</span>
+            </button>
+          </div>
 
           <div style="margin-top:10px;border:1px solid #e6e6e6;border-radius:16px;overflow:hidden;">
             <iframe
@@ -701,6 +804,92 @@ foreach ($st->fetchAll() as $m) {
 
 <script>
 (function(){
+  const popupOverlay = document.getElementById('popupOverlay');
+  const popupTitle   = document.getElementById('popupTitle');
+  const popupMessage = document.getElementById('popupMessage');
+  const popupActions = document.getElementById('popupActions');
+
+  let popupLocked = false;
+
+  function closePopup(){
+    popupOverlay.style.display = "none";
+    popupOverlay.setAttribute("aria-hidden","true");
+    popupActions.innerHTML = '';
+    popupLocked = false;
+  }
+
+  function openPopup({ title="Info", message="", okText="OK", cancelText="", onOk=null, onCancel=null }){
+    if (popupLocked) return;
+    popupLocked = true;
+
+    popupTitle.textContent = title;
+    popupMessage.textContent = message;
+    popupActions.innerHTML = '';
+
+    if (cancelText) {
+      const btnCancel = document.createElement('button');
+      btnCancel.type = "button";
+      btnCancel.className = "btn-modal-cancel";
+      btnCancel.textContent = cancelText;
+      btnCancel.addEventListener('click', () => {
+        closePopup();
+        if (typeof onCancel === "function") onCancel();
+      });
+      popupActions.appendChild(btnCancel);
+    }
+
+    const btnOk = document.createElement('button');
+    btnOk.type = "button";
+    btnOk.className = "btn-modal-action";
+    btnOk.textContent = okText;
+    btnOk.addEventListener('click', () => {
+      closePopup();
+      if (typeof onOk === "function") onOk();
+    });
+    popupActions.appendChild(btnOk);
+
+    popupOverlay.style.display = "flex";
+    popupOverlay.setAttribute("aria-hidden","false");
+  }
+
+  popupOverlay.addEventListener('click', (e) => {
+    if (e.target === popupOverlay) {
+      const hasCancel = popupActions.querySelector('.btn-modal-cancel');
+      if (!hasCancel) closePopup();
+    }
+  });
+
+  document.addEventListener('keydown', (e) => {
+    if (e.key === "Escape" && popupOverlay.style.display === "flex") {
+      const hasCancel = popupActions.querySelector('.btn-modal-cancel');
+      if (!hasCancel) closePopup();
+    }
+  });
+
+  function showError(msg){
+    openPopup({ title: "Terjadi Kesalahan", message: msg, okText: "OK" });
+  }
+
+  function showConfirm({ title="Konfirmasi", message="", okText="Ya", cancelText="Batal", onOk=null, onCancel=null }){
+    openPopup({ title, message, okText, cancelText, onOk, onCancel });
+  }
+
+  const logoutForm = document.getElementById('logoutForm');
+  const btnLogout = document.getElementById('btnLogout');
+
+  if (btnLogout && logoutForm) {
+    btnLogout.addEventListener('click', (e) => {
+      e.preventDefault();
+      showConfirm({
+        title: "Konfirmasi",
+        message: "Yakin ingin logout?",
+        okText: "Logout",
+        cancelText: "Batal",
+        onOk: () => logoutForm.submit()
+      });
+    });
+  }
+
   const materiModalEl = document.getElementById('materiModal');
   const btnOpenAdd = document.getElementById('btnOpenAdd');
   const modalTitle = document.getElementById('modalTitle');
@@ -710,15 +899,12 @@ foreach ($st->fetchAll() as $m) {
   const bagianInput = document.getElementById('bagianInput');
 
   const inputMateriMeta = document.getElementById('inputMateriMeta');
-
   const pdfPicker = document.getElementById('pdfPicker');
   const dropzone = document.getElementById('dropzone');
   const dzText = document.getElementById('dzText');
 
   const pdfPreviewWrap = document.getElementById('pdfPreviewWrap');
   const pdfPreviewFrame = document.getElementById('pdfPreviewFrame');
-
-  const pdfEditRow = document.getElementById('pdfEditRow');
   const btnEditPdf = document.getElementById('btnEditPdf');
 
   const UPLOADS_PUBLIC_BASE = "uploads";
@@ -728,6 +914,38 @@ foreach ($st->fetchAll() as $m) {
 
   let currentAction = "add";
   let objectUrl = null;
+
+  let isDirty = false;
+  let bypassCloseConfirm = false;
+  let bypassSaveConfirm = false;
+
+  function resetDirty(){
+    isDirty = false;
+    bypassCloseConfirm = false;
+    bypassSaveConfirm = false;
+  }
+
+  let initialSnapshot = null;
+
+  function makeSnapshot(){
+    return JSON.stringify({
+      action: actionInput.value,
+      id: idInput.value,
+      judul: (judulInput.value || "").trim(),
+      bagian: bagianInput.value || "",
+      hasFile: (pdfPicker.files && pdfPicker.files.length > 0)
+    });
+  }
+
+  function setInitialSnapshot(){
+    initialSnapshot = makeSnapshot();
+    resetDirty();
+  }
+
+  function recomputeDirty(){
+    if (!initialSnapshot) return;
+    isDirty = (makeSnapshot() !== initialSnapshot);
+  }
 
   function setFileToInput(file){
     const dt = new DataTransfer();
@@ -778,17 +996,16 @@ foreach ($st->fetchAll() as $m) {
   }
 
   function setModeAdd(){
-   
     dropzone.style.display = "flex";
-    pdfEditRow.style.display = "none";
     if (inputMateriMeta) inputMateriMeta.style.display = "block";
     dzText.textContent = "Klik atau seret file PDF ke sini";
+    btnEditPdf.style.display = "none";
   }
 
   function setModeEdit(){
     dropzone.style.display = "none";
-    pdfEditRow.style.display = "flex";
     if (inputMateriMeta) inputMateriMeta.style.display = "none";
+    btnEditPdf.style.display = "inline-flex";
   }
 
   function resetModal(){
@@ -811,6 +1028,7 @@ foreach ($st->fetchAll() as $m) {
     resetModal();
     setModeAdd();
     materiModal.show();
+    setTimeout(setInitialSnapshot, 0);
   });
 
   document.querySelectorAll('.btn-edit').forEach(btn => {
@@ -837,26 +1055,30 @@ foreach ($st->fetchAll() as $m) {
       }
 
       materiModal.show();
+      setTimeout(setInitialSnapshot, 0);
     });
   });
 
   function handlePdfSelect(file){
     const msg = validatePdfFile(file);
-    if(msg){ alert(msg); return; }
+    if(msg){ showError(msg); return; }
     setFileToInput(file);
 
     if (currentAction === "add") {
       dzText.textContent = `File dipilih: ${file.name}`;
     }
-    
+
     if (objectUrl) URL.revokeObjectURL(objectUrl);
     objectUrl = URL.createObjectURL(file);
     showPreview(objectUrl);
+
+    recomputeDirty();
   }
 
   pdfPicker.addEventListener('change', () => {
     const f = (pdfPicker.files || [])[0];
     if(f) handlePdfSelect(f);
+    recomputeDirty();
   });
 
   dropzone.addEventListener('click', () => {
@@ -877,13 +1099,41 @@ foreach ($st->fetchAll() as $m) {
     dropzone.classList.remove('dragover');
     const f = (e.dataTransfer.files || [])[0];
     if(f) handlePdfSelect(f);
+    recomputeDirty();
+  });
+
+  judulInput.addEventListener('input', () => recomputeDirty());
+  bagianInput.addEventListener('change', () => recomputeDirty());
+
+  materiModalEl.addEventListener('hide.bs.modal', (e) => {
+    if (popupOverlay.style.display === "flex") return;
+
+    if (isDirty && !bypassCloseConfirm) {
+      e.preventDefault();
+      showConfirm({
+        title: "Konfirmasi",
+        message: "Perubahan belum disimpan, yakin ingin keluar?",
+        okText: "Keluar",
+        cancelText: "Batal",
+        onOk: () => {
+          bypassCloseConfirm = true;
+          materiModal.hide();
+        }
+      });
+    }
+  });
+
+  materiModalEl.addEventListener('hidden.bs.modal', () => {
+    clearPreview();
+    resetDirty();
+    initialSnapshot = null;
   });
 
   materiForm.addEventListener("submit", (e) => {
     const judulMsg = validateJudul(judulInput.value);
     if(judulMsg){
       e.preventDefault();
-      alert(judulMsg);
+      showError(judulMsg);
       return;
     }
 
@@ -891,7 +1141,7 @@ foreach ($st->fetchAll() as $m) {
 
     if(currentAction === "add" && !hasPdf){
       e.preventDefault();
-      alert("Wajib upload file PDF.");
+      showError("Wajib upload file PDF.");
       return;
     }
 
@@ -899,20 +1149,43 @@ foreach ($st->fetchAll() as $m) {
       const msg = validatePdfFile(pdfPicker.files[0]);
       if(msg){
         e.preventDefault();
-        alert(msg);
+        showError(msg);
         return;
       }
     }
 
     if(!bagianInput.value){
       e.preventDefault();
-      alert("Bagian wajib dipilih.");
+      showError("Bagian wajib dipilih.");
       return;
     }
+
+    if (bypassSaveConfirm) return;
+
+    e.preventDefault();
+    showConfirm({
+      title: "Konfirmasi",
+      message: "Yakin ingin disimpan?",
+      okText: "Simpan",
+      cancelText: "Batal",
+      onOk: () => {
+        bypassSaveConfirm = true;
+        materiForm.requestSubmit ? materiForm.requestSubmit() : materiForm.submit();
+      }
+    });
   });
 
-  materiModalEl.addEventListener('hidden.bs.modal', () => {
-    clearPreview();
+  document.querySelectorAll('.form-delete').forEach((form) => {
+    form.addEventListener('submit', (e) => {
+      e.preventDefault();
+      showConfirm({
+        title: "Konfirmasi",
+        message: "Yakin ingin menghapus soal ini?",
+        okText: "Hapus",
+        cancelText: "Batal",
+        onOk: () => form.submit()
+      });
+    });
   });
 
 })();
