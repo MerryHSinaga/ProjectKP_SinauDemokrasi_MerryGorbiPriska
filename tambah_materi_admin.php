@@ -67,9 +67,7 @@ function count_pdf_pages(string $pdfPath): int {
 
 function validate_judul_or_throw(string $judul): void {
   $len = mb_strlen($judul, 'UTF-8');
-  if ($len > 45) {
-    throw new RuntimeException("Judul maksimal 45 karakter (termasuk spasi).");
-  }
+  if ($len > 45) throw new RuntimeException("Judul maksimal 45 karakter (termasuk spasi).");
   if (!preg_match('/^[A-Za-z0-9\.\,\:\?\s]+$/', $judul)) {
     throw new RuntimeException("Judul hanya boleh berisi huruf, angka, spasi, titik (.), koma (,), titik dua (:), dan tanda tanya (?).");
   }
@@ -116,6 +114,7 @@ function friendly_error_message(string $msg): ?string {
     "ID tidak valid.",
     "Materi tidak ditemukan.",
     "Wajib upload file PDF.",
+    "Subbagian wajib dipilih.",
   ];
 
   if (in_array($msg, $allowed, true)) return $msg;
@@ -124,9 +123,7 @@ function friendly_error_message(string $msg): ?string {
 }
 
 function upload_one_pdf(array $file, int $maxBytes, string $destDir): array {
-  if (!isset($file["tmp_name"]) || !is_uploaded_file($file["tmp_name"])) {
-    return [false,"","File wajib diupload."];
-  }
+  if (!isset($file["tmp_name"]) || !is_uploaded_file($file["tmp_name"])) return [false,"","File wajib diupload."];
 
   $errCode = (int)($file["error"] ?? UPLOAD_ERR_OK);
   if ($errCode !== UPLOAD_ERR_OK) {
@@ -134,9 +131,7 @@ function upload_one_pdf(array $file, int $maxBytes, string $destDir): array {
     return [false,"", $msg !== "" ? $msg : "Upload gagal."];
   }
 
-  if ((int)($file["size"] ?? 0) > $maxBytes) {
-    return [false,"","Ukuran file terlalu besar (maks 500KB)."];
-  }
+  if ((int)($file["size"] ?? 0) > $maxBytes) return [false,"","Ukuran file terlalu besar (maks 500KB)."];
 
   $ext = strtolower(pathinfo((string)($file["name"] ?? ""), PATHINFO_EXTENSION));
   if ($ext !== "pdf") return [false,"","Tipe file tidak sesuai (wajib PDF)."];
@@ -149,19 +144,10 @@ function upload_one_pdf(array $file, int $maxBytes, string $destDir): array {
     $mime = "";
   }
 
-  $allowedMimes = [
-    "application/pdf",
-    "application/x-pdf",
-    "application/octet-stream",
-  ];
+  $allowedMimes = ["application/pdf","application/x-pdf","application/octet-stream"];
 
-  if (!is_pdf_signature((string)$file["tmp_name"])) {
-    return [false,"","File tidak valid (bukan PDF)."];
-  }
-
-  if ($mime !== "" && !in_array($mime, $allowedMimes, true)) {
-    return [false,"","File tidak valid (bukan PDF)."];
-  }
+  if (!is_pdf_signature((string)$file["tmp_name"])) return [false,"","File tidak valid (bukan PDF)."];
+  if ($mime !== "" && !in_array($mime, $allowedMimes, true)) return [false,"","File tidak valid (bukan PDF)."];
 
   $name = safe_name("pdf");
   $path = rtrim($destDir,"/") . "/" . $name;
@@ -187,6 +173,7 @@ function remove_media_files(int $materiId): void {
 
 $toast = ["type"=>"", "msg"=>""];
 $lastAction = "";
+$shouldRedirect = false;
 
 try {
   if ($_SERVER["REQUEST_METHOD"] === "POST") {
@@ -211,18 +198,14 @@ try {
 
       if ($judul === "") throw new RuntimeException("Judul wajib diisi.");
       validate_judul_or_throw($judul);
-
       if ($mode !== "pdf") throw new RuntimeException("Materi hanya boleh dalam bentuk PDF.");
 
-      if ($bagian === "" || !in_array($bagian, $GLOBALS['BAGIAN_OPTIONS'], true)) {
-        $bagian = $GLOBALS['DEFAULT_BAGIAN'];
-      }
+      if ($bagian === "" || !in_array($bagian, $GLOBALS['BAGIAN_OPTIONS'], true)) $bagian = $GLOBALS['DEFAULT_BAGIAN'];
 
       db()->beginTransaction();
 
       if ($action === "add") {
-        db()->prepare("INSERT INTO materi (judul, bagian, tipe, jumlah_slide) VALUES (?, ?, 'pdf', 0)")
-          ->execute([$judul, $bagian]);
+        db()->prepare("INSERT INTO materi (judul, bagian, tipe, jumlah_slide) VALUES (?, ?, 'pdf', 0)")->execute([$judul, $bagian]);
         $materiId = (int)db()->lastInsertId();
       } else {
         $materiId = (int)($_POST["id"] ?? 0);
@@ -234,8 +217,7 @@ try {
         if (!$row) throw new RuntimeException("Materi tidak ditemukan.");
         if ((string)$row["tipe"] !== "pdf") throw new RuntimeException("Materi hanya boleh dalam bentuk PDF.");
 
-        db()->prepare("UPDATE materi SET judul=?, bagian=? WHERE id=?")
-          ->execute([$judul, $bagian, $materiId]);
+        db()->prepare("UPDATE materi SET judul=?, bagian=? WHERE id=?")->execute([$judul, $bagian, $materiId]);
       }
 
       $hasNewPdf = isset($_FILES["pdf"]) && ((int)($_FILES["pdf"]["error"] ?? UPLOAD_ERR_NO_FILE) !== UPLOAD_ERR_NO_FILE);
@@ -251,17 +233,14 @@ try {
 
         $pages = count_pdf_pages($UPLOAD_DIR . "/" . $fn);
 
-        db()->prepare("INSERT INTO materi_media (materi_id, file_path, sort_order) VALUES (?, ?, 0)")
-          ->execute([$materiId, $fn]);
-
-        db()->prepare("UPDATE materi SET jumlah_slide=? WHERE id=?")
-          ->execute([$pages, $materiId]);
+        db()->prepare("INSERT INTO materi_media (materi_id, file_path, sort_order) VALUES (?, ?, 0)")->execute([$materiId, $fn]);
+        db()->prepare("UPDATE materi SET jumlah_slide=? WHERE id=?")->execute([$pages, $materiId]);
       }
 
       db()->commit();
 
-      if ($action === "add") $toast = ["type"=>"success","msg"=>"Berhasil menambahkan materi: " . $judul];
-      else $toast = ["type"=>"success","msg"=>"Berhasil memperbarui materi: " . $judul];
+      $toast = ["type"=>"success","msg"=> ($action === "add" ? "Berhasil menambahkan materi: " : "Berhasil memperbarui materi: ") . $judul];
+      $shouldRedirect = true;
     }
 
     if ($action === "delete") {
@@ -272,6 +251,7 @@ try {
       db()->prepare("DELETE FROM materi WHERE id=?")->execute([$id]);
 
       $toast = ["type"=>"success","msg"=>"Materi berhasil dihapus."];
+      $shouldRedirect = true;
     }
   }
 } catch (Throwable $e) {
@@ -286,6 +266,20 @@ try {
   } else {
     $toast = ["type"=>"danger","msg"=> $friendly ? ("Gagal menambahkan materi. " . $friendly) : "Gagal menambahkan materi. Silakan coba lagi."];
   }
+
+  if ($lastAction !== "logout" && $_SERVER["REQUEST_METHOD"] === "POST") $shouldRedirect = true;
+}
+
+if ($shouldRedirect && $toast["type"]) {
+  $_SESSION["flash_toast"] = $toast;
+  header("Location: " . ($_SERVER["PHP_SELF"] ?? "admin_materi.php"));
+  exit;
+}
+
+if (!$toast["type"] && isset($_SESSION["flash_toast"]) && is_array($_SESSION["flash_toast"])) {
+  $t = $_SESSION["flash_toast"];
+  unset($_SESSION["flash_toast"]);
+  if (isset($t["type"], $t["msg"])) $toast = ["type" => (string)$t["type"], "msg" => (string)$t["msg"]];
 }
 
 $rows = db()->query("SELECT * FROM materi ORDER BY id DESC")->fetchAll();
@@ -307,7 +301,7 @@ foreach ($st->fetchAll() as $m) {
 
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet">
 
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
   <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.css" rel="stylesheet">
@@ -320,40 +314,122 @@ foreach ($st->fetchAll() as $m) {
       --row-line:#e6e6e6;
       --shadow:0 14px 22px rgba(0,0,0,.18);
       --gold:#f4c430;
+      --navbar-h:90px;
     }
+
+    html{overflow-y:scroll; scrollbar-gutter: stable;}
 
     body{
       margin:0;
-      font-family:'Inter';
+      font-family:'Inter',system-ui,-apple-system,sans-serif;
       background:var(--bg);
       min-height:100vh;
       display:flex;
       flex-direction:column;
     }
 
-    .bg-maroon{background:var(--maroon)!important}
-    .navbar{padding:20px 0;border-bottom:1px solid rgba(0,0,0,.15);}
+    body.modal-open{
+      overflow:hidden !important;
+      padding-right:0 !important;
+    }
+    .modal, .navbar-kpu{ padding-right:0 !important; }
 
-    .nav-link{color:#fff !important;font-weight:500;}
-    .nav-hover{position:relative;padding-bottom:6px;}
-    .nav-hover::after{
+    .navbar-kpu{
+      position:fixed;
+      top:0;left:0;right:0;
+      height:var(--navbar-h);
+      background:var(--maroon);
+      border-bottom:1px solid #000;
+      z-index:1000;
+    }
+
+    .navbar-kpu .inner{
+      max-width:1330px;
+      height:100%;
+      margin:auto;
+      padding:0 16px;
+      display:flex;
+      align-items:center;
+      justify-content:space-between;
+      gap:14px;
+      position:relative;
+    }
+
+    .btn-back{
+      position:absolute;
+      left:-40px;
+      top:50%;
+      transform:translateY(-50%);
+      width:42px;height:42px;
+      border-radius:12px;
+      display:inline-flex;
+      align-items:center;
+      justify-content:center;
+      color:#fff;
+      text-decoration:none;
+      background:transparent;
+      transition:transform .2s ease, filter .2s ease, background .2s ease;
+      z-index:2;
+    }
+
+    .btn-back:hover{
+      filter:brightness(1.05);
+      transform:translateY(-50%) translateY(-1px);
+    }
+
+    .btn-back i{
+      font-size:22px;
+      line-height:1;
+    }
+
+    .brand{
+      display:flex;
+      align-items:center;
+      gap:8px;
+      text-decoration:none;
+      flex-shrink:0;
+    }
+
+    .brand img{height:36px}
+
+    .brand-text{color:#fff;line-height:1.05;}
+    .brand-text strong{font-size:.95rem;font-weight:700;}
+    .brand-text span{font-size:.85rem;font-weight:400;}
+
+    .nav-menu{
+      display:flex;
+      gap:26px;
+      align-items:center;
+    }
+
+    .btn-logout{
+      border:0;
+      background:transparent;
+      color:#fff;
+      font-weight:600;
+      font-size:.85rem;
+      letter-spacing:.5px;
+      padding:0;
+      position:relative;
+      white-space:nowrap;
+    }
+
+    .btn-logout::after{
       content:"";
       position:absolute;
-      left:0;
-      bottom:0;
-      width:0;
-      height:3px;
+      left:0;bottom:-6px;
+      width:0;height:3px;
       background:var(--gold);
-      transition:0.3s ease;
+      transition:.3s;
     }
-    .nav-hover:hover::after,
-    .nav-active::after{width:100%;}
+
+    .btn-logout:hover::after{width:100%}
 
     .page{
       max-width:1200px;
       margin:0 auto;
       width:100%;
-      padding:140px 20px 40px;
+      padding:calc(var(--navbar-h) + 60px) 20px 40px;
       flex:1;
     }
 
@@ -377,11 +453,7 @@ foreach ($st->fetchAll() as $m) {
       box-shadow:var(--shadow);max-width:980px;margin-left:auto;margin-right:auto;
     }
 
-    .table-scroll{
-      overflow-x:auto;
-      -webkit-overflow-scrolling:touch;
-    }
-
+    .table-scroll{overflow-x:auto;-webkit-overflow-scrolling:touch;}
     .table-grid{min-width:980px;}
 
     .table-head{
@@ -416,23 +488,40 @@ foreach ($st->fetchAll() as $m) {
     .icon-edit,.icon-trash{color:var(--maroon);font-size:22px;}
 
     .label-plain{font-weight:600;font-size:14px;color:#111;margin-bottom:8px;}
-    .judul-note{
-      font-style:italic;
-      font-weight:300;
-      font-size:12px;
-      color:#333;
-      margin-bottom:8px;
-    }
+    .judul-note{font-style:italic;font-weight:300;font-size:12px;color:#333;margin-bottom:8px;}
 
     .input-pill{
       border:2px solid #111;border-radius:999px;
       padding:10px 18px;font-size:13px;outline:none;width:min(520px,100%);
       background:#fff;
     }
-    select.input-pill{
-      appearance:auto;
-      -webkit-appearance:auto;
-      -moz-appearance:auto;
+
+    .select-wrap{
+      position:relative;
+      width:min(520px, 100%);
+    }
+
+    .select-wrap select.input-pill{
+      width:100%;
+      padding-right:52px;
+      border-radius:999px;
+      appearance:none;
+      -webkit-appearance:none;
+      -moz-appearance:none;
+      background-image:none;
+    }
+
+    .select-wrap::after{
+      content:"";
+      position:absolute;
+      top:50%;
+      right:22px;
+      width:10px;
+      height:10px;
+      border-right:2px solid #111;
+      border-bottom:2px solid #111;
+      transform:translateY(-60%) rotate(45deg);
+      pointer-events:none;
     }
 
     .modal-dialog{ max-width:680px; }
@@ -470,58 +559,20 @@ foreach ($st->fetchAll() as $m) {
     .dropzone .dz-text{color:#fff;font-size:13px;font-weight:800;word-break:break-word;}
 
     .actions-row{display:flex;justify-content:flex-end;margin-top:16px;gap:10px;flex-wrap:wrap;}
-    .btn-save{
-      border:0;background:var(--maroon);color:#fff;font-weight:800;font-size:14px;
-      padding:12px 44px;border-radius:14px;
-    }
-
-    .btn-back{
-      width:42px;height:42px;border-radius:12px;
-      display:inline-flex;align-items:center;justify-content:center;
-      color:#fff;
-      text-decoration:none;
-      transition:transform .15s ease, filter .15s ease;
-    }
-    .btn-back:hover{filter:brightness(1.05);transform:translateY(-1px);}
-    .btn-back i{font-size:22px;line-height:1;}
+    .btn-save{border:0;background:var(--maroon);color:#fff;font-weight:800;font-size:14px;padding:12px 44px;border-radius:14px;}
 
     .btn-edit-pdf{
-      border:0;
-      background:var(--maroon);
-      color:#fff;
-      font-weight:800;
-      font-size:12px;
-      padding:10px 14px;
-      border-radius:999px;
-      display:inline-flex;
-      align-items:center;
-      gap:8px;
-      white-space:nowrap;
+      border:0;background:var(--maroon);color:#fff;font-weight:800;font-size:12px;
+      padding:10px 14px;border-radius:999px;display:inline-flex;align-items:center;gap:8px;white-space:nowrap;
       box-shadow:0 10px 18px rgba(0,0,0,.15);
       transition:transform .15s ease, filter .15s ease;
     }
     .btn-edit-pdf:hover{filter:brightness(.95);transform:translateY(1px);}
     .btn-edit-pdf:active{transform:translateY(2px);}
 
-    .pdf-preview-header{
-      display:flex;
-      align-items:flex-end;
-      justify-content:space-between;
-      gap:12px;
-      flex-wrap:wrap;
-    }
-    .pdf-preview-title{
-      font-weight:800;
-      font-size:14px;
-      margin:0;
-      line-height:1.2;
-    }
-    .pdf-preview-subtitle{
-      font-style:italic;
-      font-size:12px;
-      margin-top:4px;
-      margin-bottom:0;
-    }
+    .pdf-preview-header{display:flex;align-items:flex-end;justify-content:space-between;gap:12px;flex-wrap:wrap;}
+    .pdf-preview-title{font-weight:800;font-size:14px;margin:0;line-height:1.2;}
+    .pdf-preview-subtitle{font-style:italic;font-size:12px;margin-top:4px;margin-bottom:0;}
 
     .modal-overlay{
       position:fixed;
@@ -558,6 +609,7 @@ foreach ($st->fetchAll() as $m) {
       background:#e9e9e9;
       color:#111;
     }
+
     .popup-title{
       font-weight:900;
       font-size:16px;
@@ -579,12 +631,8 @@ foreach ($st->fetchAll() as $m) {
       margin-top:6px;
     }
 
-    .btn-logout{
-      border:0;
-      background:transparent;
-      color:#fff;
-      font-weight:500;
-      padding:0;
+    @media (max-width: 992px){
+      .modal-content-custom{width:min(360px, 92vw);}
     }
 
     @media (max-width: 576px){
@@ -608,35 +656,33 @@ foreach ($st->fetchAll() as $m) {
       .dropzone .dz-icon{font-size:40px;}
       .dropzone .dz-text{font-size:12px;}
       .table-grid{min-width:980px;}
-      .modal-content-custom{width:min(360px, 92vw);}
+      .btn-back{width:42px;height:42px;border-radius:12px;}
+      .btn-back i{font-size:22px;line-height:1;}
     }
   </style>
 </head>
 <body>
 
-<nav class="navbar navbar-dark bg-maroon fixed-top">
-  <div class="container d-flex justify-content-between align-items-center">
-    <div class="d-flex align-items-center gap-2">
-      <a class="btn-back" href="javascript:history.back()" aria-label="Kembali" title="Kembali">
-        <i class="bi bi-arrow-left"></i>
-      </a>
+<nav class="navbar-kpu">
+  <div class="inner">
+    <a href="admin.php" class="btn-back" id="btnBack" aria-label="Kembali">
+      <i class="bi bi-arrow-left"></i>
+    </a>
 
-      <a class="navbar-brand d-flex align-items-center gap-2" href="admin.php">
-        <img src="Asset/LogoKPU.png" width="40" height="40" alt="KPU">
-        <span class="lh-sm text-white fs-6">
-          <strong>KPU</strong><br>DIY
-        </span>
-      </a>
+    <a href="admin.php" class="brand">
+      <img src="Asset/LogoKPU.png" alt="KPU">
+      <div class="brand-text">
+        <strong>KPU</strong><br>
+        <span>DIY</span>
+      </div>
+    </a>
+
+    <div class="nav-menu">
+      <form method="post" id="logoutFormDesktop" class="m-0">
+        <input type="hidden" name="action" value="logout">
+        <button type="submit" class="btn-logout" id="btnLogoutDesktop">LOGOUT</button>
+      </form>
     </div>
-
-    <ul class="navbar-nav flex-row gap-5 align-items-center">
-      <li class="nav-item">
-        <form method="post" id="logoutForm" class="m-0">
-          <input type="hidden" name="action" value="logout">
-          <button type="submit" class="nav-link nav-hover btn-logout" id="btnLogout">LOGOUT</button>
-        </form>
-      </li>
-    </ul>
   </div>
 </nav>
 
@@ -644,7 +690,7 @@ foreach ($st->fetchAll() as $m) {
   <div class="d-flex justify-content-between align-items-start flex-wrap gap-3" style="max-width:980px;margin:0 auto;">
     <div>
       <h1 class="title">Daftar Materi</h1>
-      <div class="subtitle">Klik tombol edit untuk memperbarui file, judul, atau bagian materi.</div>
+      <div class="subtitle">Klik tombol edit untuk memperbarui file, judul, atau Subbagian materi.</div>
     </div>
 
     <button class="btn-add" type="button" id="btnOpenAdd">
@@ -654,7 +700,7 @@ foreach ($st->fetchAll() as $m) {
 
   <?php if ($toast["type"]): ?>
     <div class="alert alert-<?= htmlspecialchars($toast["type"]) ?> mt-4"
-         style="border-radius:16px;font-weight:800;max-width:980px;margin-left:auto;margin-right:auto;">
+        style="border-radius:16px;font-weight:800;max-width:980px;margin-left:auto;margin-right:auto;">
       <?= htmlspecialchars($toast["msg"]) ?>
     </div>
   <?php endif; ?>
@@ -664,7 +710,7 @@ foreach ($st->fetchAll() as $m) {
       <div class="table-head table-grid">
         <div></div>
         <div class="text col-judul">JUDUL MATERI</div>
-        <div class="text col-bagian">BAGIAN</div>
+        <div class="text col-bagian">SUBBAGIAN</div>
         <div class="text-center">JUMLAH SLIDE</div>
         <div></div>
       </div>
@@ -711,7 +757,7 @@ foreach ($st->fetchAll() as $m) {
 
 <div class="modal-overlay" id="popupOverlay" aria-hidden="true">
   <div class="modal-content-custom" role="dialog" aria-modal="true" aria-labelledby="popupTitle">
-    <p class="popup-title" id="popupTitle">Info</p>
+    <p class="popup-title" id="popupTitle">Konfirmasi</p>
     <p class="popup-message" id="popupMessage">Pesan</p>
     <div class="popup-actions" id="popupActions"></div>
   </div>
@@ -736,24 +782,18 @@ foreach ($st->fetchAll() as $m) {
         </div>
 
         <div class="label-plain">Judul Materi</div>
-        <input
-          class="input-pill"
-          name="judul"
-          id="judulInput"
-          type="text"
-          placeholder="Tuliskan judul materi di sini..."
-          maxlength="45"
-          required
-        >
+        <input class="input-pill" name="judul" id="judulInput" type="text" placeholder="Tuliskan judul materi di sini..." maxlength="45" required>
 
-        <div class="label-plain mt-3">Bagian</div>
-        <select class="input-pill" name="bagian" id="bagianInput" required>
-          <?php foreach ($BAGIAN_OPTIONS as $opt): ?>
-            <option value="<?= htmlspecialchars($opt) ?>" <?= $opt === $DEFAULT_BAGIAN ? "selected" : "" ?>>
-              <?= htmlspecialchars($opt) ?>
-            </option>
-          <?php endforeach; ?>
-        </select>
+        <div class="label-plain mt-3">Subbagian</div>
+        <div class="select-wrap">
+          <select class="input-pill" name="bagian" id="bagianInput" required>
+            <?php foreach ($BAGIAN_OPTIONS as $opt): ?>
+              <option value="<?= htmlspecialchars($opt) ?>" <?= $opt === $DEFAULT_BAGIAN ? "selected" : "" ?>>
+                <?= htmlspecialchars($opt) ?>
+              </option>
+            <?php endforeach; ?>
+          </select>
+        </div>
 
         <div id="inputMateriMeta">
           <div class="mt-3" style="font-weight:800;font-size:14px;">Input Materi</div>
@@ -783,12 +823,7 @@ foreach ($st->fetchAll() as $m) {
           </div>
 
           <div style="margin-top:10px;border:1px solid #e6e6e6;border-radius:16px;overflow:hidden;">
-            <iframe
-              id="pdfPreviewFrame"
-              src=""
-              style="width:100%;height:420px;border:0;background:#fff;"
-              title="Preview PDF"
-            ></iframe>
+            <iframe id="pdfPreviewFrame" src="" style="width:100%;height:420px;border:0;background:#fff;" title="Preview PDF"></iframe>
           </div>
         </div>
 
@@ -818,7 +853,7 @@ foreach ($st->fetchAll() as $m) {
     popupLocked = false;
   }
 
-  function openPopup({ title="Info", message="", okText="OK", cancelText="", onOk=null, onCancel=null }){
+  function openPopup({ title="Konfirmasi", message="", okText="OK", cancelText="", onOk=null, onCancel=null }){
     if (popupLocked) return;
     popupLocked = true;
 
@@ -852,43 +887,44 @@ foreach ($st->fetchAll() as $m) {
     popupOverlay.setAttribute("aria-hidden","false");
   }
 
-  popupOverlay.addEventListener('click', (e) => {
-    if (e.target === popupOverlay) {
-      const hasCancel = popupActions.querySelector('.btn-modal-cancel');
-      if (!hasCancel) closePopup();
-    }
-  });
-
-  document.addEventListener('keydown', (e) => {
-    if (e.key === "Escape" && popupOverlay.style.display === "flex") {
-      const hasCancel = popupActions.querySelector('.btn-modal-cancel');
-      if (!hasCancel) closePopup();
-    }
-  });
-
-  function showError(msg){
-    openPopup({ title: "Terjadi Kesalahan", message: msg, okText: "OK" });
+  function showError(message) {
+    openPopup({ title: "Terjadi Kesalahan", message, okText: "OK" });
   }
 
-  function showConfirm({ title="Konfirmasi", message="", okText="Ya", cancelText="Batal", onOk=null, onCancel=null }){
+  function showConfirm({ title="Konfirmasi", message="", okText="Ya", cancelText="Batal", onOk, onCancel }) {
     openPopup({ title, message, okText, cancelText, onOk, onCancel });
   }
 
-  const logoutForm = document.getElementById('logoutForm');
-  const btnLogout = document.getElementById('btnLogout');
+  popupOverlay.addEventListener('click', (e) => {
+    if (e.target !== popupOverlay) return;
+    const hasCancel = popupActions.querySelector('.btn-modal-cancel');
+    if (!hasCancel) closePopup();
+  });
 
-  if (btnLogout && logoutForm) {
-    btnLogout.addEventListener('click', (e) => {
+  document.addEventListener('keydown', (e) => {
+    if (e.key !== "Escape") return;
+    if (popupOverlay.style.display !== "flex") return;
+    const hasCancel = popupActions.querySelector('.btn-modal-cancel');
+    if (!hasCancel) closePopup();
+  });
+
+  const logoutFormDesktop = document.getElementById('logoutFormDesktop');
+  const btnLogoutDesktop  = document.getElementById('btnLogoutDesktop');
+
+  if (logoutFormDesktop && btnLogoutDesktop) {
+    btnLogoutDesktop.addEventListener('click', (e) => {
       e.preventDefault();
-      showConfirm({
+      openPopup({
         title: "Konfirmasi",
         message: "Yakin ingin logout?",
         okText: "Logout",
         cancelText: "Batal",
-        onOk: () => logoutForm.submit()
+        onOk: () => logoutFormDesktop.submit()
       });
     });
   }
+
+  const btnBack = document.getElementById('btnBack');
 
   const materiModalEl = document.getElementById('materiModal');
   const btnOpenAdd = document.getElementById('btnOpenAdd');
@@ -919,13 +955,13 @@ foreach ($st->fetchAll() as $m) {
   let bypassCloseConfirm = false;
   let bypassSaveConfirm = false;
 
+  let initialSnapshot = null;
+
   function resetDirty(){
     isDirty = false;
     bypassCloseConfirm = false;
     bypassSaveConfirm = false;
   }
-
-  let initialSnapshot = null;
 
   function makeSnapshot(){
     return JSON.stringify({
@@ -984,14 +1020,11 @@ foreach ($st->fetchAll() as $m) {
 
   function validateJudul(val){
     const judul = (val || "").trim();
-
     if(judul.length === 0) return "Judul wajib diisi.";
     if(judul.length > 45) return "Judul maksimal 45 karakter (termasuk spasi).";
 
     const re = /^[A-Za-z0-9\.\,\:\?\s]+$/;
-    if(!re.test(judul)){
-      return "Judul hanya boleh berisi huruf, angka, spasi, titik (.), koma (,), titik dua (:), dan tanda tanya (?).";
-    }
+    if(!re.test(judul)) return "Judul hanya boleh berisi huruf, angka, spasi, titik (.), koma (,), titik dua (:), dan tanda tanya (?).";
     return "";
   }
 
@@ -1018,9 +1051,33 @@ foreach ($st->fetchAll() as $m) {
     setModeAdd();
   }
 
-  btnEditPdf.addEventListener('click', () => {
-    pdfPicker.click();
-  });
+  if (btnBack) {
+    btnBack.addEventListener('click', (e) => {
+      e.preventDefault();
+
+      if (popupOverlay.style.display === "flex") return;
+
+      const modalOpen = materiModalEl.classList.contains('show');
+
+      if (!modalOpen || !isDirty) {
+        window.location.href = 'admin.php';
+        return;
+      }
+
+      showConfirm({
+        title: "Konfirmasi",
+        message: "Perubahan belum disimpan, yakin ingin kembali?",
+        okText: "Kembali",
+        cancelText: "Batal",
+        onOk: () => {
+          isDirty = false;
+          window.location.href = 'admin.php';
+        }
+      });
+    });
+  }
+
+  btnEditPdf.addEventListener('click', () => pdfPicker.click());
 
   btnOpenAdd.addEventListener('click', () => {
     currentAction = "add";
@@ -1064,9 +1121,7 @@ foreach ($st->fetchAll() as $m) {
     if(msg){ showError(msg); return; }
     setFileToInput(file);
 
-    if (currentAction === "add") {
-      dzText.textContent = `File dipilih: ${file.name}`;
-    }
+    if (currentAction === "add") dzText.textContent = `File dipilih: ${file.name}`;
 
     if (objectUrl) URL.revokeObjectURL(objectUrl);
     objectUrl = URL.createObjectURL(file);
@@ -1081,18 +1136,14 @@ foreach ($st->fetchAll() as $m) {
     recomputeDirty();
   });
 
-  dropzone.addEventListener('click', () => {
-    pdfPicker.click();
-  });
+  dropzone.addEventListener('click', () => pdfPicker.click());
 
   dropzone.addEventListener('dragover', (e) => {
     e.preventDefault();
     dropzone.classList.add('dragover');
   });
 
-  dropzone.addEventListener('dragleave', () => {
-    dropzone.classList.remove('dragover');
-  });
+  dropzone.addEventListener('dragleave', () => dropzone.classList.remove('dragover'));
 
   dropzone.addEventListener('drop', (e) => {
     e.preventDefault();
@@ -1131,34 +1182,17 @@ foreach ($st->fetchAll() as $m) {
 
   materiForm.addEventListener("submit", (e) => {
     const judulMsg = validateJudul(judulInput.value);
-    if(judulMsg){
-      e.preventDefault();
-      showError(judulMsg);
-      return;
-    }
+    if(judulMsg){ e.preventDefault(); showError(judulMsg); return; }
 
     const hasPdf = (pdfPicker.files && pdfPicker.files.length > 0);
-
-    if(currentAction === "add" && !hasPdf){
-      e.preventDefault();
-      showError("Wajib upload file PDF.");
-      return;
-    }
+    if(currentAction === "add" && !hasPdf){ e.preventDefault(); showError("Wajib upload file PDF."); return; }
 
     if(hasPdf){
       const msg = validatePdfFile(pdfPicker.files[0]);
-      if(msg){
-        e.preventDefault();
-        showError(msg);
-        return;
-      }
+      if(msg){ e.preventDefault(); showError(msg); return; }
     }
 
-    if(!bagianInput.value){
-      e.preventDefault();
-      showError("Bagian wajib dipilih.");
-      return;
-    }
+    if(!bagianInput.value){ e.preventDefault(); showError("Subbagian wajib dipilih."); return; }
 
     if (bypassSaveConfirm) return;
 
@@ -1180,17 +1214,15 @@ foreach ($st->fetchAll() as $m) {
       e.preventDefault();
       showConfirm({
         title: "Konfirmasi",
-        message: "Yakin ingin menghapus soal ini?",
+        message: "Yakin ingin menghapus materi ini?",
         okText: "Hapus",
         cancelText: "Batal",
         onOk: () => form.submit()
       });
     });
   });
-
 })();
 </script>
 
-<?php include 'footer.php'; ?>
 </body>
 </html>
