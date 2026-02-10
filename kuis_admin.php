@@ -9,6 +9,8 @@ if (empty($_SESSION["admin"])) {
 
 require_once 'db.php';
 
+$activePage = 'kuis';
+
 const BAGIAN_ENUM = [
   'Keuangan',
   'Umum dan Logistik',
@@ -18,10 +20,32 @@ const BAGIAN_ENUM = [
   'Data dan Informasi',
 ];
 
+function do_logout_and_redirect(): void {
+  $_SESSION = [];
+  if (ini_get("session.use_cookies")) {
+    $p = session_get_cookie_params();
+    setcookie(
+      session_name(),
+      "",
+      time() - 42000,
+      $p["path"],
+      $p["domain"],
+      (bool)$p["secure"],
+      (bool)$p["httponly"]
+    );
+  }
+  session_destroy();
+  header("Location: login_admin.php");
+  exit;
+}
+
+if ($_SERVER["REQUEST_METHOD"] === "POST" && (string)($_POST["action"] ?? "") === "logout") {
+  do_logout_and_redirect();
+}
+
 function validate_bagian(?string $bagian): ?string {
-  if ($bagian === null) return null;
-  $bagian = trim($bagian);
-  if ($bagian === "") return null;
+  $bagian = $bagian === null ? null : trim($bagian);
+  if ($bagian === null || $bagian === "") return null;
   return in_array($bagian, BAGIAN_ENUM, true) ? $bagian : null;
 }
 
@@ -30,15 +54,12 @@ function validate_judul(string $judul): string {
   if ($judul === "") {
     throw new RuntimeException("Judul kuis wajib diisi.");
   }
-
   if (mb_strlen($judul, "UTF-8") > 45) {
     throw new RuntimeException("Judul terlalu panjang. Maksimal 45 karakter (termasuk spasi).");
   }
-
   if (!preg_match('/^[\p{L}\p{N} \.\,\:\?]+$/u', $judul)) {
     throw new RuntimeException("Judul hanya boleh berisi huruf, angka, spasi, titik (.), koma (,), titik dua (:), dan tanda tanya (?).");
   }
-
   return $judul;
 }
 
@@ -63,11 +84,7 @@ function friendly_error_message(string $msg): string {
     return "Terjadi kendala saat menyimpan data. Silakan coba lagi.";
   }
 
-  if ($m === "") {
-    return "Gagal memproses permintaan. Silakan coba lagi.";
-  }
-
-  return $m;
+  return $m !== "" ? $m : "Gagal memproses permintaan. Silakan coba lagi.";
 }
 
 function ensure_tables(): void {
@@ -79,6 +96,7 @@ function ensure_tables(): void {
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
   ");
 
+  // Tambah kolom secara idempotent (aman walau sudah ada)
   try {
     db()->exec("ALTER TABLE kuis_paket ADD COLUMN input_mode ENUM('csv','manual') NOT NULL DEFAULT 'csv' AFTER judul");
   } catch (Throwable $e) {}
@@ -118,37 +136,22 @@ function ensure_tables(): void {
   ");
 }
 
-function paket_create(string $judul, string $mode, ?string $bagian): int {
+function paket_save(int $id, string $judul, string $mode, ?string $bagian): int {
   $judul = validate_judul($judul);
   $mode = strtolower(trim($mode));
   $bagian = validate_bagian($bagian);
-
   if (!in_array($mode, ["csv","manual"], true)) $mode = "csv";
   if ($bagian === null) throw new RuntimeException("Bagian wajib dipilih.");
 
-  $st = db()->prepare("INSERT INTO kuis_paket (judul, input_mode, bagian) VALUES (?, ?, ?)");
-  $st->execute([$judul, $mode, $bagian]);
-  return (int)db()->lastInsertId();
-}
-
-function paket_update(int $id, string $judul, ?string $mode = null, ?string $bagian = null): void {
-  if ($id <= 0) throw new RuntimeException("Data paket tidak valid.");
-
-  $judul = validate_judul($judul);
-
-  $bagian = validate_bagian($bagian);
-  if ($bagian === null) throw new RuntimeException("Bagian wajib dipilih.");
-
-  if ($mode !== null) {
-    $mode = strtolower(trim($mode));
-    if (!in_array($mode, ["csv","manual"], true)) $mode = "csv";
-    $st = db()->prepare("UPDATE kuis_paket SET judul=?, input_mode=?, bagian=? WHERE id=?");
-    $st->execute([$judul, $mode, $bagian, $id]);
-    return;
+  if ($id <= 0) {
+    $st = db()->prepare("INSERT INTO kuis_paket (judul, input_mode, bagian) VALUES (?, ?, ?)");
+    $st->execute([$judul, $mode, $bagian]);
+    return (int)db()->lastInsertId();
   }
 
-  $st = db()->prepare("UPDATE kuis_paket SET judul=?, bagian=? WHERE id=?");
-  $st->execute([$judul, $bagian, $id]);
+  $st = db()->prepare("UPDATE kuis_paket SET judul=?, input_mode=?, bagian=? WHERE id=?");
+  $st->execute([$judul, $mode, $bagian, $id]);
+  return $id;
 }
 
 function soal_upsert(
@@ -217,9 +220,8 @@ function csv_parse_valid_rows(string $tmpPath): array {
         throw new RuntimeException("Format CSV tidak sesuai. Pastikan ada 7 kolom: nomor, pertanyaan, opsi_a, opsi_b, opsi_c, opsi_d, jawaban.");
       }
 
-      if ($line === 1 && !ctype_digit((string)$row[0])) {
-        continue;
-      }
+      // Header detection: baris 1 dan kolom nomor bukan angka -> skip
+      if ($line === 1 && !ctype_digit((string)$row[0])) continue;
 
       if (!ctype_digit((string)$row[0])) {
         throw new RuntimeException("Format CSV tidak sesuai. Kolom nomor harus angka.");
@@ -236,11 +238,9 @@ function csv_parse_valid_rows(string $tmpPath): array {
       if ($nomor < 1 || $nomor > 15) {
         throw new RuntimeException("Nomor soal pada CSV harus 1 sampai 15.");
       }
-
       if (trim($pertanyaan) === "" || trim($a) === "" || trim($b) === "" || trim($c) === "" || trim($d) === "") {
         throw new RuntimeException("Ada soal pada CSV yang belum lengkap. Pastikan pertanyaan dan opsi A–D terisi.");
       }
-
       if (!in_array($jawaban, ["A","B","C","D"], true)) {
         throw new RuntimeException("Kunci jawaban pada CSV harus A, B, C, atau D.");
       }
@@ -269,6 +269,7 @@ function csv_parse_valid_rows(string $tmpPath): array {
 
 ensure_tables();
 
+/** Download template CSV */
 if (isset($_GET["download"]) && $_GET["download"] === "template_csv") {
   $filename = "template_kuis.csv";
   header("Content-Type: text/csv; charset=utf-8");
@@ -281,11 +282,11 @@ if (isset($_GET["download"]) && $_GET["download"] === "template_csv") {
 
   fputcsv($out, ["nomor","pertanyaan","opsi_a","opsi_b","opsi_c","opsi_d","jawaban"]);
   fputcsv($out, ["1","Contoh pertanyaan?","Opsi A","Opsi B","Opsi C","Opsi D","A"]);
-
   fclose($out);
   exit;
 }
 
+/** AJAX paket detail */
 if (isset($_GET["ajax"]) && $_GET["ajax"] === "paket_detail") {
   header("Content-Type: application/json; charset=utf-8");
   $id = (int)($_GET["id"] ?? 0);
@@ -296,8 +297,10 @@ if (isset($_GET["ajax"]) && $_GET["ajax"] === "paket_detail") {
   $paket = $p->fetch();
   if (!$paket) { echo json_encode(["ok"=>false]); exit; }
 
-  $soal = db()->prepare("SELECT nomor, pertanyaan, opsi_a, opsi_b, opsi_c, opsi_d, jawaban
-                         FROM kuis_soal WHERE paket_id=? ORDER BY nomor ASC");
+  $soal = db()->prepare("
+    SELECT nomor, pertanyaan, opsi_a, opsi_b, opsi_c, opsi_d, jawaban
+    FROM kuis_soal WHERE paket_id=? ORDER BY nomor ASC
+  ");
   $soal->execute([$id]);
   $rows = $soal->fetchAll();
 
@@ -320,91 +323,90 @@ try {
   if ($_SERVER["REQUEST_METHOD"] === "POST") {
     $action = (string)($_POST["action"] ?? "");
 
-    if ($action === "paket_delete") {
-      $id = (int)($_POST["paket_id"] ?? 0);
-      if ($id <= 0) throw new RuntimeException("Data paket tidak valid.");
-      db()->prepare("DELETE FROM kuis_paket WHERE id=?")->execute([$id]);
-      $toast = ["type"=>"success","msg"=>"Paket kuis berhasil dihapus."];
-    }
-
-    if ($action === "soal_save_bulk") {
-      $paketId = (int)($_POST["paket_id"] ?? 0);
-      $judulPaket = (string)($_POST["judul_paket"] ?? "");
-      $bagian = (string)($_POST["bagian"] ?? "");
-
-      db()->beginTransaction();
-
-      if ($paketId <= 0) {
-        $paketId = paket_create($judulPaket, "manual", $bagian);
-      } else {
-        paket_update($paketId, $judulPaket, "manual", $bagian);
+    switch ($action) {
+      case "paket_delete": {
+        $id = (int)($_POST["paket_id"] ?? 0);
+        if ($id <= 0) throw new RuntimeException("Data paket tidak valid.");
+        db()->prepare("DELETE FROM kuis_paket WHERE id=?")->execute([$id]);
+        $toast = ["type"=>"success","msg"=>"Paket kuis berhasil dihapus."];
+        break;
       }
 
-      $bulkJson = (string)($_POST["bulk_json"] ?? "");
-      if ($bulkJson === "") throw new RuntimeException("Data soal masih kosong.");
+      case "soal_save_bulk": {
+        $paketId = (int)($_POST["paket_id"] ?? 0);
+        $judulPaket = (string)($_POST["judul_paket"] ?? "");
+        $bagian = (string)($_POST["bagian"] ?? "");
+        $bulkJson = (string)($_POST["bulk_json"] ?? "");
 
-      $bulk = json_decode($bulkJson, true);
-      if (!is_array($bulk)) throw new RuntimeException("Data soal tidak terbaca. Silakan coba lagi.");
+        if ($bulkJson === "") throw new RuntimeException("Data soal masih kosong.");
 
-      $saved = 0;
-      foreach ($bulk as $noStr => $d) {
-        $no = (int)$noStr;
-        if (!is_array($d)) continue;
+        $bulk = json_decode($bulkJson, true);
+        if (!is_array($bulk)) throw new RuntimeException("Data soal tidak terbaca. Silakan coba lagi.");
 
-        soal_upsert(
-          $paketId,
-          $no,
-          (string)($d["pertanyaan"] ?? ""),
-          (string)($d["a"] ?? ""),
-          (string)($d["b"] ?? ""),
-          (string)($d["c"] ?? ""),
-          (string)($d["d"] ?? ""),
-          (string)($d["jawaban"] ?? "")
-        );
+        db()->beginTransaction();
+        $paketId = paket_save($paketId, $judulPaket, "manual", $bagian);
 
-        if (trim((string)($d["pertanyaan"] ?? "")) !== "") $saved++;
+        $saved = 0;
+        foreach ($bulk as $noStr => $d) {
+          $no = (int)$noStr;
+          if (!is_array($d)) continue;
+
+          soal_upsert(
+            $paketId,
+            $no,
+            (string)($d["pertanyaan"] ?? ""),
+            (string)($d["a"] ?? ""),
+            (string)($d["b"] ?? ""),
+            (string)($d["c"] ?? ""),
+            (string)($d["d"] ?? ""),
+            (string)($d["jawaban"] ?? "")
+          );
+
+          if (trim((string)($d["pertanyaan"] ?? "")) !== "") $saved++;
+        }
+
+        db()->commit();
+        $toast = ["type"=>"success","msg"=>"Soal berhasil disimpan (Manual). Total terisi: {$saved} (maks 15)."];
+        break;
       }
 
-      db()->commit();
-      $toast = ["type"=>"success","msg"=>"Soal berhasil disimpan (Manual). Total terisi: {$saved} (maks 15)."];
-    }
+      case "csv_import": {
+        $paketId = (int)($_POST["paket_id"] ?? 0);
+        $judulPaket = (string)($_POST["judul_paket"] ?? "");
+        $bagian = (string)($_POST["bagian"] ?? "");
 
-    if ($action === "csv_import") {
-      $paketId = (int)($_POST["paket_id"] ?? 0);
-      $judulPaket = (string)($_POST["judul_paket"] ?? "");
-      $bagian = (string)($_POST["bagian"] ?? "");
+        if (!isset($_FILES["csv"]) || !is_uploaded_file($_FILES["csv"]["tmp_name"])) {
+          throw new RuntimeException("File CSV wajib diupload.");
+        }
 
-      if (!isset($_FILES["csv"]) || !is_uploaded_file($_FILES["csv"]["tmp_name"])) {
-        throw new RuntimeException("File CSV wajib diupload.");
+        $parsedRows = csv_parse_valid_rows($_FILES["csv"]["tmp_name"]);
+
+        db()->beginTransaction();
+        $paketId = paket_save($paketId, $judulPaket, "csv", $bagian);
+
+        $saved = 0;
+        foreach ($parsedRows as $r) {
+          soal_upsert(
+            $paketId,
+            (int)$r["nomor"],
+            (string)$r["pertanyaan"],
+            (string)$r["a"],
+            (string)$r["b"],
+            (string)$r["c"],
+            (string)$r["d"],
+            (string)$r["jawaban"]
+          );
+          $saved++;
+        }
+
+        db()->commit();
+        $toast = ["type"=>"success","msg"=>"Import CSV berhasil. Total soal: {$saved} (maks 15)."];
+        break;
       }
 
-      $parsedRows = csv_parse_valid_rows($_FILES["csv"]["tmp_name"]);
-
-      db()->beginTransaction();
-
-      if ($paketId <= 0) {
-        $paketId = paket_create($judulPaket, "csv", $bagian);
-      } else {
-        paket_update($paketId, $judulPaket, "csv", $bagian);
-      }
-
-      $saved = 0;
-      foreach ($parsedRows as $r) {
-        soal_upsert(
-          $paketId,
-          (int)$r["nomor"],
-          (string)$r["pertanyaan"],
-          (string)$r["a"],
-          (string)$r["b"],
-          (string)$r["c"],
-          (string)$r["d"],
-          (string)$r["jawaban"]
-        );
-        $saved++;
-      }
-
-      db()->commit();
-      $toast = ["type"=>"success","msg"=>"Import CSV berhasil. Total soal: {$saved} (maks 15)."];
+      case "logout":
+        do_logout_and_redirect();
+        break;
     }
   }
 } catch (Throwable $e) {
@@ -437,6 +439,8 @@ $paket = db()->query("
     :root{
       --maroon:#700D09;
       --bg:#E9EDFF;
+      --gold:#f4c430;
+      --navbar-h:90px;
       --header-gray:#d9d9d9;
       --row-line:#e6e6e6;
       --shadow:0 14px 22px rgba(0,0,0,.18);
@@ -451,15 +455,131 @@ $paket = db()->query("
       flex-direction:column;
     }
 
-    .bg-maroon{background:var(--maroon)!important}
-    .navbar{padding:20px 0;border-bottom:1px solid rgba(0,0,0,.15);}
+    .navbar-kpu{
+      position:fixed;
+      top:0;left:0;right:0;
+      height:var(--navbar-h);
+      background:var(--maroon);
+      border-bottom:1px solid #000;
+      z-index:1000;
+    }
 
-    .nav-link{color:#fff !important;font-weight:500;}
-    .nav-hover{position:relative;padding-bottom:6px;}
-    .nav-hover::after{content:"";position:absolute;left:0;bottom:0;width:0;height:3px;background:#f4c430;transition:0.3s ease;}
-    .nav-hover:hover::after,.nav-active::after{width:100%;}
+    .navbar-kpu .inner{
+      max-width:1330px;
+      height:100%;
+      margin:auto;
+      padding:0 16px;
+      display:flex;
+      align-items:center;
+      justify-content:space-between;
+      gap:14px;
+      position:relative;
+    }
 
-    .page{max-width:1200px;margin:0 auto;width:100%;padding:140px 20px 40px;flex:1;}
+    .btn-back{
+      position:absolute;
+      left:-40px;
+      top:50%;
+      transform:translateY(-50%);
+      width:42px;height:42px;
+      border-radius:12px;
+      display:inline-flex;
+      align-items:center;
+      justify-content:center;
+      color:#fff;
+      text-decoration:none;
+      background:transparent;
+      transition:transform .2s ease, filter .2s ease, background .2s ease;
+      z-index:2;
+    }
+
+    .btn-back:hover{
+      filter:brightness(1.05);
+      transform:translateY(-50%) translateY(-1px);
+    }
+
+    .btn-back i{
+      font-size:22px;
+      line-height:1;
+    }
+
+    .brand{
+      display:flex;
+      align-items:center;
+      gap:8px;
+      text-decoration:none;
+      flex-shrink:0;
+    }
+
+    .brand img{height:36px}
+
+    .brand-text{color:#fff;line-height:1.05;}
+    .brand-text strong{font-size:.95rem;font-weight:700;}
+    .brand-text span{font-size:.85rem;font-weight:400;}
+
+    .nav-menu{
+      display:flex;
+      gap:26px;
+      align-items:center;
+    }
+
+    .nav-menu a{
+      color:#fff;
+      font-weight:600;
+      font-size:.85rem;
+      letter-spacing:.5px;
+      text-decoration:none;
+      position:relative;
+      white-space:nowrap;
+      border:0;
+      background:transparent;
+      padding:0;
+    }
+
+    .nav-menu a::after{
+      content:"";
+      position:absolute;
+      left:0;bottom:-6px;
+      width:0;height:3px;
+      background:var(--gold);
+      transition:.3s;
+    }
+
+    .nav-menu a:hover::after,
+    .nav-menu a.active::after{
+      width:100%;
+    }
+
+    .btn-logout{
+      border:0;
+      background:transparent;
+      color:#fff;
+      font-weight:600;
+      font-size:.85rem;
+      letter-spacing:.5px;
+      padding:0;
+      position:relative;
+      white-space:nowrap;
+    }
+
+    .btn-logout::after{
+      content:"";
+      position:absolute;
+      left:0;bottom:-6px;
+      width:0;height:3px;
+      background:var(--gold);
+      transition:.3s;
+    }
+
+    .btn-logout:hover::after{width:100%}
+
+    .page{
+      max-width:1200px;
+      margin:0 auto;
+      width:100%;
+      padding:calc(var(--navbar-h) + 60px) 20px 40px;
+      flex:1;
+    }
 
     .title{font-weight:900;font-size:48px;margin:0;color:#111;line-height:1.05;}
     .subtitle{margin-top:10px;color:#333;font-size:14px;font-style:italic;}
@@ -579,15 +699,6 @@ $paket = db()->query("
       display:inline-flex;align-items:center;gap:8px;
     }
 
-    .btn-back{
-      width:42px;height:42px;border-radius:12px;
-      display:inline-flex;align-items:center;justify-content:center;
-      color:#fff;text-decoration:none;
-      transition:transform .15s ease, filter .15s ease;
-    }
-    .btn-back:hover{filter:brightness(1.05);transform:translateY(-1px);}
-    .btn-back i{font-size:22px;line-height:1;}
-
     .col-bagian{padding-left:0.5cm;}
 
     @media (max-width: 576px){
@@ -614,6 +725,8 @@ $paket = db()->query("
       .tpl-link{font-size:11px;}
       .info-max{font-size:11px;}
       .table-grid{min-width:980px;}
+      .btn-back{width:42px;height:42px;border-radius:12px;}
+      .btn-back i{font-size:22px;line-height:1;}
     }
 
     .modal-overlay{
@@ -632,7 +745,7 @@ $paket = db()->query("
       border-radius:18px;
       width:360px;
       text-align:center;
-      box-shadow:0 18px 28px rgba(0,0,0,.22);
+      box-shadow:0 18px 34px rgba(0,0,0,.25);
     }
 
     .btn-modal-action{
@@ -643,66 +756,74 @@ $paket = db()->query("
       background:var(--maroon);
       color:#fff;
     }
-
     .btn-modal-cancel{
-      border:2px solid #111;
+      border:0;
       border-radius:20px;
       padding:6px 22px;
-      font-weight:700;
-      background:#fff;
+      font-weight:600;
+      background:#e9e9e9;
       color:#111;
-    }
-
-    .popup-actions{
-      display:flex;
-      gap:10px;
-      justify-content:center;
-      margin-top:14px;
-      flex-wrap:wrap;
     }
 
     .popup-title{
       font-weight:900;
-      font-size:18px;
-      margin:0 0 8px;
+      font-size:16px;
+      margin:0 0 8px 0;
       color:#111;
     }
-
-    .popup-msg{
-      margin:0;
-      font-size:14px;
+    .popup-message{
+      font-size:13px;
       color:#333;
+      margin:0 0 18px 0;
       line-height:1.45;
-      white-space:pre-line;
+      white-space:pre-wrap;
     }
+    .popup-actions{
+      display:flex;
+      gap:10px;
+      justify-content:center;
+      flex-wrap:wrap;
+      margin-top:6px;
+    }
+
+    body.modal-open{ padding-right: 0 !important; }
+    body.modal-open .navbar-kpu{ padding-right: 0 !important; }
+
+    @media (max-width: 992px){
+      .modal-content-custom{width:min(360px, 92vw);}
+    }
+
+    html{overflow-y:scroll; scrollbar-gutter: stable;}
   </style>
 </head>
 <body>
 
-<nav class="navbar navbar-dark bg-maroon fixed-top">
-  <div class="container d-flex justify-content-between align-items-center">
+<nav class="navbar-kpu">
+  <div class="inner">
 
-    <div class="d-flex align-items-center gap-2">
-      <a class="btn-back" href="javascript:history.back()" aria-label="Kembali" title="Kembali">
-        <i class="bi bi-arrow-left"></i>
-      </a>
+    <a href="javascript:history.back()" class="btn-back" aria-label="Kembali">
+      <i class="bi bi-arrow-left"></i>
+    </a>
 
-      <a class="navbar-brand d-flex align-items-center gap-2" href="admin.php">
-        <img src="Asset/LogoKPU.png" width="40" height="40" alt="KPU">
-        <span class="lh-sm text-white fs-6">
-          <strong>KPU</strong><br>DIY
-        </span>
-      </a>
+    <a href="admin.php" class="brand">
+      <img src="Asset/LogoKPU.png" alt="KPU">
+      <div class="brand-text">
+        <strong>KPU</strong><br>
+        <span>DIY</span>
+      </div>
+    </a>
+
+    <div class="nav-menu">
+      <form method="post" id="logoutFormDesktop" class="m-0">
+        <input type="hidden" name="action" value="logout">
+        <button type="submit" class="btn-logout" id="btnLogoutDesktop">LOGOUT</button>
+      </form>
     </div>
-
-    <ul class="navbar-nav flex-row gap-5 align-items-center">
-      <li class="nav-item">
-        <a class="nav-link nav-hover" href="login_admin.php" id="logoutLink">LOGOUT</a>
-      </li>
-    </ul>
 
   </div>
 </nav>
+
+<div class="hamburger-backdrop" id="hamburgerBackdrop"></div>
 
 <main class="page">
   <div class="d-flex justify-content-between align-items-start flex-wrap gap-3" style="max-width:980px;margin:0 auto;">
@@ -718,7 +839,7 @@ $paket = db()->query("
 
   <?php if ($toast["type"] && $toast["type"] !== "danger"): ?>
     <div class="alert alert-<?= htmlspecialchars($toast["type"]) ?> mt-4"
-         style="border-radius:16px;font-weight:800;max-width:980px;margin-left:auto;margin-right:auto;">
+        style="border-radius:16px;font-weight:800;max-width:980px;margin-left:auto;margin-right:auto;">
       <?= htmlspecialchars($toast["msg"]) ?>
     </div>
   <?php endif; ?>
@@ -727,8 +848,8 @@ $paket = db()->query("
     <div class="table-scroll">
       <div class="table-head table-grid">
         <div></div>
-        <div class="text">JUDUL MATERI</div>
-        <div class="text col-bagian">BAGIAN</div>
+        <div class="text">JUDUL KUIS</div>
+        <div class="text col-bagian">SUBBAGIAN</div>
         <div class="text-center">JUMLAH SOAL</div>
         <div></div>
       </div>
@@ -775,7 +896,6 @@ $paket = db()->query("
       <div style="height:14px;background:#fff"></div>
     </div>
   </section>
-
 </main>
 
 <div class="modal fade" id="kuisModal" tabindex="-1" aria-hidden="true">
@@ -802,9 +922,9 @@ $paket = db()->query("
           </div>
 
           <div class="flex-grow-1">
-            <label class="fw-bold mb-2" style="font-size:14px;">Bagian</label>
+            <label class="fw-bold mb-2" style="font-size:14px;">Subbagian</label>
             <select class="pill-input pill-select" id="bagianInput" name="bagian" required>
-              <option value="">-- Pilih Bagian --</option>
+              <option value="">-- Pilih Subbagian --</option>
               <option value="Keuangan">Keuangan</option>
               <option value="Umum dan Logistik">Umum dan Logistik</option>
               <option value="Teknis Penyelenggara Pemilu, Partisipasi Hubungan Masyarakat">Teknis Penyelenggara Pemilu, Partisipasi Hubungan Masyarakat</option>
@@ -900,9 +1020,9 @@ $paket = db()->query("
 </div>
 
 <div class="modal-overlay" id="popupOverlay" aria-hidden="true">
-  <div class="modal-content-custom" role="dialog" aria-modal="true" aria-labelledby="popupTitle" aria-describedby="popupMsg">
-    <h3 class="popup-title" id="popupTitle">Peringatan</h3>
-    <p class="popup-msg" id="popupMsg"></p>
+  <div class="modal-content-custom" role="dialog" aria-modal="true" aria-labelledby="popupTitle">
+    <p class="popup-title" id="popupTitle">Konfirmasi</p>
+    <p class="popup-message" id="popupMessage">Pesan</p>
     <div class="popup-actions" id="popupActions"></div>
   </div>
 </div>
@@ -910,27 +1030,109 @@ $paket = db()->query("
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
 
 <script>
+(function(){
+  const hb = document.getElementById('hamburger');
+  const bd = document.getElementById('hamburgerBackdrop');
+  if (!hb || !bd) return;
+
+  hb.addEventListener('click', () => hb.classList.toggle('open'));
+  bd.addEventListener('click', () => hb.classList.remove('open'));
+  window.addEventListener('resize', () => { if (innerWidth > 992) hb.classList.remove('open'); });
+})();
+</script>
+
+<script>
+(function(){
+  const popupOverlay = document.getElementById('popupOverlay');
+  const popupTitle   = document.getElementById('popupTitle');
+  const popupMessage = document.getElementById('popupMessage');
+  const popupActions = document.getElementById('popupActions');
+
+  let popupLocked = false;
+
+  function closePopup(){
+    popupOverlay.style.display = "none";
+    popupOverlay.setAttribute("aria-hidden","true");
+    popupActions.innerHTML = '';
+    popupLocked = false;
+  }
+
+  function openPopup({ title="Konfirmasi", message="", okText="OK", cancelText="", onOk=null, onCancel=null }){
+    if (popupLocked) return;
+    popupLocked = true;
+
+    popupTitle.textContent = title;
+    popupMessage.textContent = message;
+    popupActions.innerHTML = '';
+
+    if (cancelText) {
+      const btnCancel = document.createElement('button');
+      btnCancel.type = "button";
+      btnCancel.className = "btn-modal-cancel";
+      btnCancel.textContent = cancelText;
+      btnCancel.addEventListener('click', () => {
+        closePopup();
+        if (typeof onCancel === "function") onCancel();
+      });
+      popupActions.appendChild(btnCancel);
+    }
+
+    const btnOk = document.createElement('button');
+    btnOk.type = "button";
+    btnOk.className = "btn-modal-action";
+    btnOk.textContent = okText;
+    btnOk.addEventListener('click', () => {
+      closePopup();
+      if (typeof onOk === "function") onOk();
+    });
+    popupActions.appendChild(btnOk);
+
+    popupOverlay.style.display = "flex";
+    popupOverlay.setAttribute("aria-hidden","false");
+  }
+
+  function showError(message) {
+    openPopup({ title: "Terjadi Kesalahan", message, okText: "OK" });
+  }
+
+  function showConfirm({ title="Konfirmasi", message="", okText="Ya", cancelText="Batal", onOk, onCancel }) {
+    openPopup({ title, message, okText, cancelText, onOk, onCancel });
+  }
+
+  popupOverlay.addEventListener('click', (e) => {
+    if (e.target !== popupOverlay) return;
+    const hasCancel = popupActions.querySelector('.btn-modal-cancel');
+    if (!hasCancel) closePopup();
+  });
+
+  document.addEventListener('keydown', (e) => {
+    if (e.key !== "Escape") return;
+    if (popupOverlay.style.display !== "flex") return;
+    const hasCancel = popupActions.querySelector('.btn-modal-cancel');
+    if (!hasCancel) closePopup();
+  });
+
   const modalEl = document.getElementById("kuisModal");
   const modal = new bootstrap.Modal(modalEl, { backdrop: true, keyboard: true });
 
   const btnOpenAdd = document.getElementById("btnOpenAdd");
   const modalTitle = document.getElementById("modalTitle");
 
-  const actionInput = document.getElementById("actionInput");
-  const paketIdInput = document.getElementById("paketIdInput");
-  const judulPaketInput = document.getElementById("judulPaketInput");
-  const bagianInput = document.getElementById("bagianInput");
-  const bulkJsonInput = document.getElementById("bulkJsonInput");
+  const actionInput    = document.getElementById("actionInput");
+  const paketIdInput   = document.getElementById("paketIdInput");
+  const judulPaketInput= document.getElementById("judulPaketInput");
+  const bagianInput    = document.getElementById("bagianInput");
+  const bulkJsonInput  = document.getElementById("bulkJsonInput");
 
   const modeSwitch = document.getElementById("modeSwitch");
-  const csvArea = document.getElementById("csvArea");
+  const csvArea    = document.getElementById("csvArea");
   const manualArea = document.getElementById("manualArea");
 
   const csvInput = document.getElementById("csvInput");
-  const csvDrop = document.getElementById("csvDrop");
-  const csvName = document.getElementById("csvName");
+  const csvDrop  = document.getElementById("csvDrop");
+  const csvName  = document.getElementById("csvName");
 
-  const numbers = document.getElementById("numbers");
+  const numbers     = document.getElementById("numbers");
   const nomorActive = document.getElementById("nomorActive");
 
   const pertanyaanInput = document.getElementById("pertanyaanInput");
@@ -938,77 +1140,23 @@ $paket = db()->query("
   const opsiB = document.getElementById("opsiB");
   const opsiC = document.getElementById("opsiC");
   const opsiD = document.getElementById("opsiD");
-
   const ansGrid = document.getElementById("ansGrid");
 
-  const popupOverlay = document.getElementById("popupOverlay");
-  const popupTitle = document.getElementById("popupTitle");
-  const popupMsg = document.getElementById("popupMsg");
-  const popupActions = document.getElementById("popupActions");
+  const logoutFormDesktop = document.getElementById('logoutFormDesktop');
+  const btnLogoutDesktop  = document.getElementById('btnLogoutDesktop');
 
-  function openPopup({ title="Peringatan", message="", buttons=[] }) {
-    popupTitle.textContent = title;
-    popupMsg.textContent = message;
-
-    popupActions.innerHTML = "";
-    buttons.forEach((b) => {
-      const btn = document.createElement("button");
-      btn.type = "button";
-      btn.className = b.variant === "cancel" ? "btn-modal-cancel" : "btn-modal-action";
-      btn.textContent = b.text || "OK";
-      btn.addEventListener("click", () => {
-        closePopup();
-        if (typeof b.onClick === "function") b.onClick();
+  if (logoutFormDesktop && btnLogoutDesktop) {
+    btnLogoutDesktop.addEventListener('click', (e) => {
+      e.preventDefault();
+      openPopup({
+        title: "Konfirmasi",
+        message: "Yakin ingin logout?",
+        okText: "Logout",
+        cancelText: "Batal",
+        onOk: () => logoutFormDesktop.submit()
       });
-      popupActions.appendChild(btn);
-    });
-
-    popupOverlay.style.display = "flex";
-    popupOverlay.setAttribute("aria-hidden", "false");
-  }
-
-  function closePopup() {
-    popupOverlay.style.display = "none";
-    popupOverlay.setAttribute("aria-hidden", "true");
-  }
-
-  popupOverlay.addEventListener("click", (e) => {
-    if (e.target === popupOverlay && popupActions.children.length <= 1) closePopup();
-  });
-
-  function showError(message) {
-    openPopup({
-      title: "Terjadi Kesalahan",
-      message,
-      buttons: [{ text: "OK", variant: "primary" }]
     });
   }
-
-  function showConfirm({ title="Konfirmasi", message="", okText="Ya", cancelText="Batal", onOk, onCancel }) {
-    openPopup({
-      title,
-      message,
-      buttons: [
-        { text: cancelText, variant: "cancel", onClick: onCancel },
-        { text: okText, variant: "primary", onClick: onOk }
-      ]
-    });
-  }
-
-  const logoutLink = document.getElementById("logoutLink");
-  logoutLink.addEventListener("click", (e) => {
-    e.preventDefault();
-    const href = logoutLink.getAttribute("href") || "login_admin.php";
-    showConfirm({
-      title: "Konfirmasi Logout",
-      message: "Yakin ingin logout?",
-      okText: "Logout",
-      cancelText: "Batal",
-      onOk: () => {
-        window.location.href = href;
-      }
-    });
-  });
 
   document.querySelectorAll(".form-delete-paket").forEach((form) => {
     form.addEventListener("submit", (e) => {
@@ -1027,26 +1175,25 @@ $paket = db()->query("
   let forceClose = false;
   let allowSubmit = false;
 
-  function setDirty(v) { isDirty = !!v; }
-  function markDirty(){ setDirty(true); }
-  function clearDirty(){ setDirty(false); }
+  function markDirty(){ isDirty = true; }
+  function clearDirty(){ isDirty = false; }
 
   modalEl.addEventListener("hide.bs.modal", (e) => {
     if (forceClose) return;
-    if (isDirty) {
-      e.preventDefault();
-      showConfirm({
-        title: "Perubahan belum disimpan",
-        message: "Perubahan belum disimpan, yakin ingin keluar?",
-        okText: "Keluar",
-        cancelText: "Tetap di sini",
-        onOk: () => {
-          forceClose = true;
-          modal.hide();
-          setTimeout(() => { forceClose = false; }, 0);
-        }
-      });
-    }
+    if (!isDirty) return;
+
+    e.preventDefault();
+    showConfirm({
+      title: "Perubahan belum disimpan",
+      message: "Perubahan belum disimpan, yakin ingin keluar?",
+      okText: "Keluar",
+      cancelText: "Tetap di sini",
+      onOk: () => {
+        forceClose = true;
+        modal.hide();
+        setTimeout(() => { forceClose = false; }, 0);
+      }
+    });
   });
 
   let currentMode = "csv";
@@ -1054,7 +1201,6 @@ $paket = db()->query("
 
   function setMode(mode){
     currentMode = mode;
-
     modeSwitch.querySelectorAll(".mode-pill").forEach(p=>{
       const on = p.dataset.mode === mode;
       p.classList.toggle("active", on);
@@ -1118,6 +1264,7 @@ $paket = db()->query("
   function buildNumbers(){
     numbers.innerHTML = "";
     const activeNo = parseInt(nomorActive.value,10);
+
     for(let i=1;i<=15;i++){
       const btn = document.createElement("button");
       btn.type = "button";
@@ -1161,13 +1308,8 @@ $paket = db()->query("
     allowSubmit = false;
   }
 
-  judulPaketInput.addEventListener("input", markDirty);
+  [judulPaketInput, pertanyaanInput, opsiA, opsiB, opsiC, opsiD].forEach(el => el.addEventListener("input", markDirty));
   bagianInput.addEventListener("change", markDirty);
-  pertanyaanInput.addEventListener("input", markDirty);
-  opsiA.addEventListener("input", markDirty);
-  opsiB.addEventListener("input", markDirty);
-  opsiC.addEventListener("input", markDirty);
-  opsiD.addEventListener("input", markDirty);
 
   csvDrop.addEventListener("click", ()=> csvInput.click());
   csvDrop.addEventListener("dragover", (e)=>{ e.preventDefault(); csvDrop.classList.add("dragover"); });
@@ -1224,6 +1366,7 @@ $paket = db()->query("
               jawaban: s.jawaban || ""
             };
           });
+
           nomorActive.value = "1";
           loadDraft(1);
           buildNumbers();
@@ -1231,7 +1374,7 @@ $paket = db()->query("
           setMode("manual");
           clearDirty();
         }
-      }catch(e){}
+      } catch(e) {}
 
       modal.show();
     });
@@ -1248,7 +1391,6 @@ $paket = db()->query("
   const formEl = document.getElementById("kuisForm");
   formEl.addEventListener("submit", (e)=>{
     if (allowSubmit) return;
-
     e.preventDefault();
 
     const judul = judulPaketInput.value || "";
@@ -1289,9 +1431,8 @@ $paket = db()->query("
       showError(<?= json_encode((string)$toast["msg"], JSON_UNESCAPED_UNICODE) ?>);
     });
   <?php endif; ?>
+})();
 </script>
-
-<?php include 'footer.php'; ?>
 
 </body>
 </html>
