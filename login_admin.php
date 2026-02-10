@@ -9,9 +9,6 @@ if ($_SERVER["REQUEST_METHOD"] === "POST") {
     $username = trim($_POST["username"] ?? "");
     $password = $_POST["password"] ?? "";
 
-    $VALID_USER = "AdminSinauDemokrasi";
-    $VALID_PASS = "KPUYogyakart4#";
-
     if ($username === $VALID_USER && $password === $VALID_PASS) {
         $_SESSION["admin"] = true;
         $_SESSION["admin_user"] = $username;
