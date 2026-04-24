@@ -9,21 +9,17 @@ $search = trim($_GET['search'] ?? '');
 $bagian = trim($_GET['bagian'] ?? '');
 
 $daftarBagian = [
-    'Keuangan',
-    'Umum dan Logistik',
-    'Teknis Penyelenggara Pemilu',
-    'Partisipasi Hubungan Masyarakat',
-    'Hukum dan SDM',
-    'Perencanaan',
-    'Data dan Informasi'
+    'Keuangan, Umum dan Logistik',
+    'Penyelenggara Pemilu, Partisipasi Hubungan Masyarakat, Hubungan dan SDM',
+    'Perencanaan, Data dan Informasi'
 ];
 
-$sql = "SELECT id, judul, bagian FROM materi WHERE 1=1";
+$sql = "SELECT id, judul, bagian, thumbnail, tipe, content_url FROM materi WHERE 1=1";
 $params = [];
 
 if ($search !== '') {
     $sql .= " AND judul LIKE :search";
-    $params['search'] = "%$search%";
+    $params['search'] = "%{$search}%";
 }
 
 if ($bagian !== '') {
@@ -35,6 +31,38 @@ $sql .= " ORDER BY created_at DESC";
 $stmt = db()->prepare($sql);
 $stmt->execute($params);
 $materi = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+function materiThumbUrl(?string $thumb): ?string
+{
+    $thumb = trim((string)$thumb);
+
+    if ($thumb === '') {
+        return null;
+    }
+
+    $fullPath = __DIR__ . '/uploads/thumbnails/' . $thumb;
+
+    if (!is_file($fullPath)) {
+        return null;
+    }
+
+    return 'uploads/thumbnails/' . rawurlencode($thumb);
+}
+
+function materiTarget(array $m): array
+{
+    $tipe = strtolower(trim((string)($m['tipe'] ?? 'pdf')));
+    $contentUrl = trim((string)($m['content_url'] ?? ''));
+    $href = 'materi_viewer.php?id=' . (int)($m['id'] ?? 0);
+    $target = '';
+
+    if (($tipe === 'video' || $tipe === 'link') && $contentUrl !== '') {
+        $href = $contentUrl;
+        $target = '_blank';
+    }
+
+    return [$href, $target];
+}
 ?>
 
 <?php
@@ -122,6 +150,11 @@ main{
   align-items:center;
   justify-content:center;
   position:relative;
+  overflow:hidden;
+}
+
+.kpu-header.has-thumb{
+  background:#f3f3f3;
 }
 
 .kpu-header::after{
@@ -132,11 +165,21 @@ main{
   width:100%;
   height:4px;
   background:linear-gradient(90deg,transparent,var(--gold),transparent);
+  z-index:2;
 }
 
 .kpu-logo{
   width:96px;
   height:auto;
+  position:relative;
+  z-index:1;
+}
+
+.kpu-thumb{
+  width:100%;
+  height:100%;
+  object-fit:cover;
+  display:block;
 }
 
 .kpu-body{
@@ -150,22 +193,39 @@ main{
   font-size:1.1rem;
   margin-bottom:18px;
   line-height:1.4;
+  min-height:50px;
 }
 
-.kpu-tag{
+.kpu-meta{
+  display:flex;
+  flex-wrap:wrap;
+  gap:10px;
+}
+
+.kpu-pill{
   display:inline-block;
   background:var(--maroon);
   color:#fff;
-  padding:7px 20px;
+  padding:7px 16px;
   font-size:.75rem;
   font-weight:700;
   border-radius:999px;
-  text-transform:capitalize;
+  letter-spacing:.4px;
 }
 
 .empty-state{
   color:#777;
   font-size:.95rem;
+}
+
+@media (max-width: 576px){
+  .kpu-header{
+    height:170px;
+  }
+
+  .kpu-title{
+    min-height:auto;
+  }
 }
 </style>
 </head>
@@ -200,13 +260,13 @@ main{
         </div>
       </div>
 
-      <div class="col-md-3">
+      <div class="col-md-4">
         <select
           name="bagian"
           class="form-select shadow-sm"
           onchange="document.getElementById('filterForm').submit()"
         >
-          <option value="">Semua Subbagian</option>
+          <option value="">Semua Bagian</option>
           <?php foreach ($daftarBagian as $b): ?>
             <option value="<?= htmlspecialchars($b); ?>" <?= $bagian === $b ? 'selected' : ''; ?>>
               <?= htmlspecialchars($b); ?>
@@ -219,7 +279,7 @@ main{
     <?php if (count($materi) === 0): ?>
       <div class="empty-state">
         <?php if ($bagian !== ''): ?>
-          Belum ada materi pada subbagian <b><?= htmlspecialchars($bagian); ?></b>.
+          Belum ada materi pada bagian <b><?= htmlspecialchars($bagian); ?></b>.
         <?php else: ?>
           Materi tidak ditemukan.
         <?php endif; ?>
@@ -227,19 +287,42 @@ main{
     <?php else: ?>
       <div class="row g-4 justify-content-center">
         <?php foreach ($materi as $m): ?>
+          <?php
+            $thumbUrl = materiThumbUrl($m['thumbnail'] ?? null);
+            [$href, $target] = materiTarget($m);
+          ?>
           <div class="col-lg-4 col-md-6">
-            <a href="materi_viewer.php?id=<?= (int)$m['id']; ?>" class="text-decoration-none">
+            <a
+              href="<?= htmlspecialchars($href); ?>"
+              class="text-decoration-none"
+              <?= $target !== '' ? 'target="' . htmlspecialchars($target) . '" rel="noopener noreferrer"' : '' ?>
+            >
               <div class="kpu-card">
-                <div class="kpu-header">
-                  <img src="Asset/LogoKPU.png" class="kpu-logo" alt="KPU">
+                <div class="kpu-header<?= $thumbUrl ? ' has-thumb' : '' ?>">
+                  <?php if ($thumbUrl): ?>
+                    <img
+                      src="<?= htmlspecialchars($thumbUrl); ?>"
+                      class="kpu-thumb"
+                      alt="<?= htmlspecialchars($m['judul']); ?>"
+                    >
+                  <?php else: ?>
+                    <img src="Asset/LogoKPU.png" class="kpu-logo" alt="KPU">
+                  <?php endif; ?>
                 </div>
+
                 <div class="kpu-body text-start">
                   <div class="kpu-title">
                     <?= htmlspecialchars($m['judul']); ?>
                   </div>
-                  <span class="kpu-tag">
-                    <?= htmlspecialchars($m['bagian']); ?>
-                  </span>
+
+                  <div class="kpu-meta">
+                    <span class="kpu-pill">
+                      <?= htmlspecialchars(strtoupper(($m['tipe'] ?? '') === 'link' ? 'video' : (string)$m['tipe'])); ?>
+                    </span>
+                    <span class="kpu-pill">
+                      <?= htmlspecialchars((string)($m['bagian'] ?? '')); ?>
+                    </span>
+                  </div>
                 </div>
               </div>
             </a>
@@ -264,7 +347,6 @@ function debouncedSubmit(){
   }, typingDelay);
 }
 </script>
-
 
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
 </body>

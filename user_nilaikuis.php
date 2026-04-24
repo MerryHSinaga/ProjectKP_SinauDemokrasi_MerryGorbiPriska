@@ -1,8 +1,15 @@
 <?php
 session_start();
 
-$activePage = 'kuis';
+if (isset($_GET['end']) && $_GET['end'] === '1') {
+    unset($_SESSION['flow_step'], $_SESSION['kuis_id']);
+    session_unset();
+    session_destroy();
+    header("Location: daftar_kuis.php");
+    exit;
+}
 
+$activePage = 'kuis';
 
 if (
     !isset($_SESSION['flow_step']) ||
@@ -90,53 +97,7 @@ body{
     font-weight:700;
     text-decoration:none;
 }
-.modal-exit{
-    position:fixed;
-    inset:0;
-    background:rgba(0,0,0,.6);
-    display:none;
-    align-items:center;
-    justify-content:center;
-    z-index:9999;
-    padding:20px;
-}
-.modal-box{
-    background:#fff;
-    padding:26px;
-    border-radius:18px;
-    width:360px;
-    text-align:center;
-}
-.popup-title{
-    font-weight:900;
-    font-size:16px;
-    margin-bottom:8px;
-}
-.popup-message{
-    font-size:13px;
-    color:#333;
-    margin-bottom:18px;
-}
-.popup-actions{
-    display:flex;
-    gap:10px;
-}
-.btn-no,
-.btn-yes{
-    flex:1;
-    border:0;
-    border-radius:20px;
-    padding:8px 0;
-    font-weight:600;
-}
-.btn-no{
-    background:#e9e9e9;
-    color:#111;
-}
-.btn-yes{
-    background:#700D09;
-    color:#fff;
-}
+
 @media(max-width:768px){
     body{padding-top:96px}
     .title{font-size:36px}
@@ -160,34 +121,34 @@ include 'identitas.php';
 
     <div class="result-box">
 
-        <?php if ($pred === 'Perlu Belajar Lagi'): ?>
-
-            <p>Terima kasih, Anda telah berusaha menyelesaikan kegiatan SINAU DEMOKRASI hari ini!</p>
+    <?php if ($pred === 'Perlu Belajar Lagi'): ?>
+    <p>Terima kasih, Anda telah berusaha menyelesaikan kegiatan SINAU DEMOKRASI hari ini!</p>
             <p>
                 Anda memperoleh skor <b><?= $skor ?> (Perlu Belajar Lagi)</b><br>
                 sehingga pemahaman Anda masih perlu ditingkatkan.
             </p>
-
-            <div class="btn-wrap">
-                <a href="user_jawabankuis.php" class="btn-glossy nav-safe">
-                    Cek Jawaban
-                </a>
-            </div>
-
-        <?php else: ?>
+    <div class="btn-wrap">
+        <a href="user_jawabankuis.php" class="btn-glossy nav-safe">
+            Cek Jawaban
+        </a>
+    </div>
+    <?php else: ?>
 
             <p>Selamat, Anda telah berhasil menyelesaikan SINAU DEMOKRASI hari ini!</p>
 
             <div class="score"><?= $skor ?></div>
             <div class="predikat"><?= $pred ?></div>
 
-            <div class="btn-wrap">
+           <div class="btn-wrap">
                 <a href="user_jawabankuis.php" class="btn-glossy nav-safe">
                     Cek Jawaban
                 </a>
-                <a href="download_sertifikat.php" class="btn-glossy nav-safe">
-                    Download Sertifikat
-                </a>
+
+                <?php if (!empty($_SESSION['aktivitas_kuis_id'])): ?>
+                    <a href="download_sertifikat.php?id=<?= (int)$_SESSION['aktivitas_kuis_id'] ?>" class="btn-glossy nav-safe">
+                        Download Sertifikat
+                    </a>
+                <?php endif; ?>
             </div>
 
         <?php endif; ?>
@@ -195,58 +156,8 @@ include 'identitas.php';
     </div>
 </div>
 
-<div class="modal-exit" id="exitModal">
-    <div class="modal-box">
-        <p class="popup-title">Perhatian</p>
-        <p class="popup-message">
-            Pastikan telah mengunduh sertifikat atau memeriksa hasil kuis.
-            Setelah Anda keluar, sesi Anda tidak akan disimpan.
-        </p>
-        <div class="popup-actions">
-            <button class="btn-no" onclick="closeExit()">Kembali</button>
-            <button class="btn-yes" onclick="confirmExit()">Keluar</button>
-        </div>
-    </div>
-</div>
-
 <script>
-let allowNavigate=false;
-let allowExit=false;
 
-history.pushState(null,"",location.href);
-window.addEventListener("popstate",()=>{
-    if(!allowNavigate && !allowExit){
-        openExit();
-        history.pushState(null,"",location.href);
-    }
-});
-
-window.addEventListener("beforeunload",e=>{
-    if(!allowNavigate && !allowExit){
-        e.preventDefault();
-        e.returnValue="";
-    }
-});
-
-document.querySelectorAll("a").forEach(link=>{
-    link.addEventListener("click", e => {
-        if (link.classList.contains("nav-safe")) {
-            allowNavigate = true;
-            return;
-        }
-        if (!allowNavigate && !allowExit) {
-            e.preventDefault();
-            openExit();
-        }
-    });
-});
-
-function openExit(){document.getElementById("exitModal").style.display="flex"}
-function closeExit(){document.getElementById("exitModal").style.display="none"}
-function confirmExit(){
-    allowExit = true;
-    window.location.href = "daftar_kuis.php?end=1";
-}
 
 </script>
 

@@ -2,6 +2,13 @@
 declare(strict_types=1);
 session_start();
 require_once 'db.php';
+
+$activePage = 'dashboard';
+$isLoggedIn = !empty($_SESSION['user_logged_in']) || !empty($_SESSION['admin_logged_in']);
+
+$materiLink = $isLoggedIn ? 'daftar_materi.php' : 'login.php';
+$kuisLink   = $isLoggedIn ? 'daftar_kuis.php' : 'login.php';
+$kontakLink = $isLoggedIn ? 'kontak.php' : 'login.php';
 ?>
 <!DOCTYPE html>
 <html lang="id">
@@ -29,18 +36,17 @@ require_once 'db.php';
 
         .section-title { color:var(--maroon); font-weight:800; }
 
-.info-box{
-  background:#fff;
-  padding:24px 28px;
-  border-radius:14px;
-  max-width:730px;
-  margin:auto;
-  box-shadow:
-    0 4px 14px rgba(0,0,0,.08),
-    0 -4px 0 rgba(112, 13, 9, 0.85),
-    0 -8px 18px rgba(244, 58, 48, 0.25);
-}
-
+        .info-box{
+          background:#fff;
+          padding:24px 28px;
+          border-radius:14px;
+          max-width:730px;
+          margin:auto;
+          box-shadow:
+            0 4px 14px rgba(0,0,0,.08),
+            0 -4px 0 rgba(112, 13, 9, 0.85),
+            0 -8px 18px rgba(244, 58, 48, 0.25);
+        }
 
         .alur-card {
             background:var(--maroon);
@@ -51,6 +57,8 @@ require_once 'db.php';
             transition:.3s;
             height:100%;
             box-shadow: 0 8px 18px rgba(0,0,0,.18);
+            text-decoration:none;
+            display:block;
         }
 
         .alur-card:hover {
@@ -59,6 +67,7 @@ require_once 'db.php';
                 0 0 0 2px rgba(244,196,48,.85),
                 0 0 18px rgba(244,196,48,.6),
                 0 12px 28px rgba(0,0,0,.25);
+            color:#fff;
         }
 
         .feature-card {
@@ -73,7 +82,6 @@ require_once 'db.php';
         .feature-card:hover {
             transform:translateY(-5px);
             box-shadow:0 10px 25px rgba(0,0,0,.2);
-            box-shadow:
         }
 
         .btn-maroon {
@@ -85,11 +93,23 @@ require_once 'db.php';
         }
 
         .btn-maroon:hover { 
-            background: #fff;; 
-            color: var(--maroon);
+            background:#fff; 
+            color:var(--maroon);
             box-shadow:
             0 0 0 2px rgba(112,13,9,.85),
             0 10px 25px rgba(0,0,0,.12);    
+        }
+
+        .login-note{
+            max-width:730px;
+            margin:0 auto 22px;
+            background:#fff3cd;
+            color:#856404;
+            border:1px solid #ffe69c;
+            padding:14px 18px;
+            border-radius:14px;
+            text-align:center;
+            font-weight:600;
         }
 
         footer {
@@ -122,7 +142,7 @@ include 'identitas.php';
             foreach ($covers as $c) {
                 echo '
                 <div class="carousel-item '.$active.'">
-                    <img src="'.$c.'" class="hero-image">
+                    <img src="'.$c.'" class="hero-image" alt="Cover">
                 </div>';
                 $active = '';
             }
@@ -132,6 +152,7 @@ include 'identitas.php';
 </section>
 
 <section class="py-5 text-center">
+
     <div class="info-box fs-5 mt-4">
         SI-NAU Demokrasi merupakan media edukasi demokrasi dan kepemiluan berbasis website
         untuk membantu masyarakat memahami proses dan nilai-nilai demokrasi serta kepemiluan
@@ -142,18 +163,62 @@ include 'identitas.php';
 <section class="container py-5">
     <h3 class="section-title text-center mb-5 fs-1">Alur Pelaksanaan</h3>
     <div class="row g-4">
-        <div class="col-md-3"><div class="alur-card"><div class="h-100 d-flex flex-column justify-content-center align-items-center"><i class="bi bi-book fs-1 mb-2"></i><p class="mb-0">Pilih dan Baca Materi</p></div></div></div>
-        <div class="col-md-3"><div class="alur-card"><div class="h-100 d-flex flex-column justify-content-center align-items-center"><i class="bi bi-ui-checks fs-1 mb-2"></i><p class="mb-0">Ikuti Kuis yang Tersedia</p></div></div></div>
-        <div class="col-md-3"><div class="alur-card"><div class="h-100 d-flex flex-column justify-content-center align-items-center"><i class="bi bi-bar-chart fs-1 mb-2"></i><p class="mb-0">Lihat Hasil Kuis</p></div></div></div>
-        <div class="col-md-3"><div class="alur-card"><div class="h-100 d-flex flex-column justify-content-center align-items-center"><i class="bi bi-award fs-1 mb-2"></i><p class="mb-0">Unduh Sertifikat</p></div></div></div>
+        <div class="col-md-3">
+            <a href="<?= $materiLink ?>" class="alur-card">
+                <div class="h-100 d-flex flex-column justify-content-center align-items-center">
+                    <i class="bi bi-book fs-1 mb-2"></i>
+                    <p class="mb-0">Pilih dan Baca Materi</p>
+                </div>
+            </a>
+        </div>
+
+        <div class="col-md-3">
+            <a href="<?= $kuisLink ?>" class="alur-card">
+                <div class="h-100 d-flex flex-column justify-content-center align-items-center">
+                    <i class="bi bi-ui-checks fs-1 mb-2"></i>
+                    <p class="mb-0">Ikuti Kuis yang Tersedia</p>
+                </div>
+            </a>
+        </div>
+
+        <div class="col-md-3">
+            <a href="<?= $kuisLink ?>" class="alur-card">
+                <div class="h-100 d-flex flex-column justify-content-center align-items-center">
+                    <i class="bi bi-bar-chart fs-1 mb-2"></i>
+                    <p class="mb-0">Lihat Hasil Kuis</p>
+                </div>
+            </a>
+        </div>
+
+        <div class="col-md-3">
+            <a href="<?= $kuisLink ?>" class="alur-card">
+                <div class="h-100 d-flex flex-column justify-content-center align-items-center">
+                    <i class="bi bi-award fs-1 mb-2"></i>
+                    <p class="mb-0">Unduh Sertifikat</p>
+                </div>
+            </a>
+        </div>
     </div>
 </section>
 
 <section class="container py-5 text-center">
     <h3 class="section-title mb-4">Ayo, belajar Demokrasi dan Kepemiluan Lebih Dekat!</h3>
     <div class="row justify-content-center g-4">
-        <div class="col-md-4"><div class="feature-card"><h5 class="fw-bold">Materi</h5><p class="text-muted small">Materi tentang demokrasi dan kepemiluan terstruktur.</p><a class="btn btn-maroon" href="daftar_materi.php">Baca</a></div></div>
-        <div class="col-md-4"><div class="feature-card"><h5 class="fw-bold">Kuis</h5><p class="text-muted small">Uji pemahaman demokrasi dan kepemiluan Anda.</p><a class="btn btn-maroon" href="daftar_kuis.php">Coba</a></div></div>
+        <div class="col-md-4">
+            <div class="feature-card">
+                <h5 class="fw-bold">Materi</h5>
+                <p class="text-muted small">Materi tentang demokrasi dan kepemiluan terstruktur.</p>
+                <a class="btn btn-maroon" href="<?= $materiLink ?>">Baca</a>
+            </div>
+        </div>
+
+        <div class="col-md-4">
+            <div class="feature-card">
+                <h5 class="fw-bold">Kuis</h5>
+                <p class="text-muted small">Uji pemahaman demokrasi dan kepemiluan Anda.</p>
+                <a class="btn btn-maroon" href="<?= $kuisLink ?>">Coba</a>
+            </div>
+        </div>
     </div>
 </section>
 

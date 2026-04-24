@@ -3,7 +3,7 @@ declare(strict_types=1);
 session_start();
 
 if (empty($_SESSION["admin"])) {
-  header("Location: login_admin.php");
+  header("Location: login.php");
   exit;
 }
 
@@ -35,7 +35,7 @@ function do_logout_and_redirect(): void {
     );
   }
   session_destroy();
-  header("Location: login_admin.php");
+  header("Location: login.php");
   exit;
 }
 

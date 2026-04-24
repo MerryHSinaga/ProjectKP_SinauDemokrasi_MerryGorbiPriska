@@ -53,20 +53,25 @@ body{
 }
 
 .contact-item{
+  margin-bottom:18px;
+}
+
+.contact-link{
   display:flex;
   align-items:center;
   gap:14px;
   font-size:15px;
-  margin-bottom:18px;
+  color:#000;
+  text-decoration:none;
 }
 
-.contact-item i{
+.contact-link:hover{
+  color:#000;
+}
+
+.contact-link i{
   font-size:22px;
   color:var(--maroon);
-}
-
-.contact-item a{
-  color:inherit;
 }
 
 .btn-back{
@@ -109,41 +114,38 @@ body{
       <h2 class="contact-title">Kontak Kami</h2>
 
       <div class="contact-item">
-        <a href="https://maps.app.goo.gl/fVTgKMD9LTj3JsmRA"
-           target="_blank" rel="noopener">
+        <a class="contact-link" href="https://maps.app.goo.gl/fVTgKMD9LTj3JsmRA" target="_blank" rel="noopener">
           <i class="bi bi-geo-alt-fill"></i>
+          <span>Komisi Pemilihan Umum Daerah Istimewa Yogyakarta</span>
         </a>
-        <span>Komisi Pemilihan Umum Daerah Istimewa Yogyakarta</span>
       </div>
 
       <div class="contact-item">
-        <a href="mailto:diy@kpu.go.id">
+        <a class="contact-link" href="mailto:diy@kpu.go.id">
           <i class="bi bi-envelope-fill"></i>
+          <span>diy@kpu.go.id</span>
         </a>
-        <span>diy@kpu.go.id</span>
       </div>
 
       <div class="contact-item">
-        <a href="tel:+62274558006">
+        <a class="contact-link" href="tel:+62274558006">
           <i class="bi bi-telephone-fill"></i>
+          <span>(0274) 558006</span>
         </a>
-        <span>(0274) 558006</span>
       </div>
 
       <div class="contact-item">
-        <a href="https://wa.me/6281911301775"
-           target="_blank" rel="noopener">
+        <a class="contact-link" href="https://wa.me/6281911301775" target="_blank" rel="noopener">
           <i class="bi bi-whatsapp"></i>
+          <span>0819 1130 1775</span>
         </a>
-        <span>0819 1130 1775</span>
       </div>
 
       <div class="contact-item">
-        <a href="https://diy.kpu.go.id"
-           target="_blank" rel="noopener">
+        <a class="contact-link" href="https://diy.kpu.go.id" target="_blank" rel="noopener">
           <i class="bi bi-globe2"></i>
+          <span>https://diy.kpu.go.id</span>
         </a>
-        <span>https://diy.kpu.go.id</span>
       </div>
 
       <a href="dashboard.php" class="btn-back">

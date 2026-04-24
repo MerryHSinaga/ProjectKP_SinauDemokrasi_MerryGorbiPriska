@@ -2,11 +2,13 @@
 session_start();
 
 if (
-    !isset($_SESSION['jawaban']) ||
-    !isset($_SESSION['materi']) ||
-    !isset($_SESSION['kuis_id'])
+    !isset($_SESSION['flow_step']) ||
+    $_SESSION['flow_step'] !== 'SELESAI' ||
+    !isset($_SESSION['jawaban'], $_SESSION['materi'], $_SESSION['kuis_id'])
 ) {
-    header("Location: user_nilaikuis.php");
+    session_unset();
+    session_destroy();
+    header("Location: daftar_kuis.php");
     exit;
 }
 
@@ -38,8 +40,12 @@ $stmt = db()->prepare("
 $stmt->execute([$paketId]);
 $soal = $stmt->fetchAll();
 
-if (!$soal) exit;
-
+if (!$soal) {
+    session_unset();
+    session_destroy();
+    header("Location: daftar_kuis.php");
+    exit;
+}
 ?>
 
 <?php
@@ -106,7 +112,7 @@ body{
 .brand-text strong{font-size:.95rem;font-weight:700}
 .brand-text span{font-size:.85rem}
 
-.btn-logout{
+.btn-navbar{
     border:0;
     background:transparent;
     color:#fff;
@@ -117,7 +123,7 @@ body{
     text-decoration:none;
 }
 
-.btn-logout::after{
+.btn-navbar::after{
     content:"";
     position:absolute;
     left:0;
@@ -128,15 +134,11 @@ body{
     transition:.3s;
 }
 
-.btn-logout:hover::after{width:100%}
+.btn-navbar:hover::after{width:100%}
 
-.container{
-    margin-top:32px;
-}
+.container{margin-top:32px}
 
-.page-header{
-    margin-bottom:36px;
-}
+.page-header{margin-bottom:36px}
 
 .subtitle{
     font-size:.8rem;
@@ -197,16 +199,41 @@ body{
     border-radius:25px;
     padding:8px 40px;
     border:0;
-    text-decoration:none;
+    text-decoration:none; 
 }
 
-.btn-selesai:hover{color:#fff}
+.popup-title{
+    font-weight:900;
+    font-size:16px;
+    margin-bottom:8px;
+}
+
+.popup-message{
+    font-size:13px;
+    color:#333;
+    margin-bottom:18px;
+}
+
+.popup-actions{
+    display:flex;
+    gap:10px;
+}
+
+.btn-no,
+.btn-yes{
+    flex:1;
+    border:0;
+    border-radius:20px;
+    padding:8px 0;
+    font-weight:600;
+}
 
 @media(max-width:768px){
     .title{font-size:22px}
 }
 </style>
 </head>
+
 <body>
 
 <nav class="navbar-kpu">
@@ -218,7 +245,8 @@ body{
                 <span>DIY</span>
             </div>
         </div>
-        <a href="user_nilaikuis.php" class="btn-logout">HASIL KUIS</a>
+
+        <a href="user_nilaikuis.php" class="btn-navbar">HASIL KUIS</a>
     </div>
 </nav>
 
@@ -271,10 +299,22 @@ body{
     <?php endforeach; ?>
 
     <div class="d-flex justify-content-end mt-5">
-        <a href="user_nilaikuis.php" class="btn-selesai">Selesai</a>
-    </div>
-
+    <a href="user_nilaikuis.php" class="btn-selesai">Selesai</a>
 </div>
+
+<script>
+function openExitModal(){
+    document.getElementById("exitModal").style.display="flex";
+}
+
+function closeExitModal(){
+    document.getElementById("exitModal").style.display="none";
+}
+
+function confirmExit(){
+    window.location.href="daftar_kuis.php?end=1";
+}
+</script>
 
 </body>
 </html>

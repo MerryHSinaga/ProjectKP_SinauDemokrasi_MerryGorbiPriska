@@ -15,16 +15,12 @@ $search = trim($_GET['search'] ?? '');
 $bagian = trim($_GET['bagian'] ?? '');
 
 $daftarBagian = [
-    'Keuangan',
-    'Umum dan Logistik',
-    'Teknis Penyelenggara Pemilu',
-    'Partisipasi Hubungan Masyarakat',
-    'Hukum dan SDM',
-    'Perencanaan',
-    'Data dan Informasi'
+    'Keuangan, Umum dan Logistik',
+    'Penyelenggara Pemilu, Partisipasi Hubungan Masyarakat, Hubungan dan SDM',
+    'Perencanaan, Data dan Informasi'
 ];
 
-$sql = "SELECT id, judul, bagian FROM kuis_paket WHERE 1=1";
+$sql = "SELECT id, judul, bagian, thumbnail FROM kuis_paket WHERE 1=1";
 $params = [];
 
 if ($search !== '') {
@@ -41,6 +37,29 @@ $sql .= " ORDER BY created_at DESC";
 $stmt = db()->prepare($sql);
 $stmt->execute($params);
 $kuis = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+function kuisThumbUrl(?string $thumb): ?string
+{
+    $thumb = trim((string)$thumb);
+
+    if ($thumb === '') {
+        return null;
+    }
+
+    $candidates = [
+        __DIR__ . '/uploads/thumbnails/' . $thumb => 'uploads/thumbnails/' . rawurlencode($thumb),
+        __DIR__ . '/uploads/kuis/' . $thumb => 'uploads/kuis/' . rawurlencode($thumb),
+        __DIR__ . '/uploads/quiz/' . $thumb => 'uploads/quiz/' . rawurlencode($thumb)
+    ];
+
+    foreach ($candidates as $fullPath => $publicPath) {
+        if (is_file($fullPath)) {
+            return $publicPath;
+        }
+    }
+
+    return null;
+}
 ?>
 
 <?php
@@ -102,10 +121,6 @@ main{
   opacity:1;
 }
 
-/* =========================
-   KUIS CARD (4 PER BARIS)
-   ========================= */
-
 .kpu-card{
   background:#fff;
   border-radius:22px;
@@ -127,6 +142,11 @@ main{
   align-items:center;
   justify-content:center;
   position:relative;
+  overflow:hidden;
+}
+
+.kpu-header.has-thumb{
+  background:#f3f3f3;
 }
 
 .kpu-header::after{
@@ -137,6 +157,7 @@ main{
   width:100%;
   height:4px;
   background:linear-gradient(90deg,transparent,var(--gold),transparent);
+  z-index:2;
 }
 
 .kpu-icon{
@@ -149,6 +170,15 @@ main{
   display:flex;
   align-items:center;
   justify-content:center;
+  position:relative;
+  z-index:1;
+}
+
+.kpu-thumb{
+  width:100%;
+  height:100%;
+  object-fit:cover;
+  display:block;
 }
 
 .kpu-body{
@@ -163,7 +193,6 @@ main{
   font-size:.95rem;
   margin-bottom:14px;
   line-height:1.4;
-
   display:-webkit-box;
   -webkit-line-clamp:2;
   -webkit-box-orient:vertical;
@@ -247,13 +276,22 @@ main{
     <?php else: ?>
       <div class="row g-4">
         <?php foreach ($kuis as $k): ?>
+          <?php $thumbUrl = kuisThumbUrl($k['thumbnail'] ?? null); ?>
           <div class="col-xl-3 col-lg-3 col-md-6 col-sm-12">
-            <a href="user_biodatakuis.php?id=<?= (int)$k['id']; ?>" class="text-decoration-none">
+            <a href="start_kuis.php?id=<?= (int)$k['id']; ?>" class="text-decoration-none">
               <div class="kpu-card">
-                <div class="kpu-header">
-                  <div class="kpu-icon">
-                    <i class="bi bi-clipboard-check"></i>
-                  </div>
+                <div class="kpu-header<?= $thumbUrl ? ' has-thumb' : '' ?>">
+                  <?php if ($thumbUrl): ?>
+                    <img
+                      src="<?= htmlspecialchars($thumbUrl); ?>"
+                      class="kpu-thumb"
+                      alt="<?= htmlspecialchars($k['judul']); ?>"
+                    >
+                  <?php else: ?>
+                    <div class="kpu-icon">
+                      <i class="bi bi-clipboard-check"></i>
+                    </div>
+                  <?php endif; ?>
                 </div>
                 <div class="kpu-body">
                   <div class="kpu-title">

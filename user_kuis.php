@@ -1,35 +1,37 @@
 <?php
 session_start();
 
-
 header("Cache-Control: no-store, no-cache, must-revalidate, max-age=0");
 header("Pragma: no-cache");
 header("Expires: 0");
 
 $activePage = 'kuis';
 
-
-if (
-    !isset($_SESSION['flow_step']) ||
-    !in_array($_SESSION['flow_step'], ['BIODATA_OK', 'IN_KUIS'])
-) {
+if (!isset($_SESSION['flow_step'], $_SESSION['kuis_id'], $_SESSION['nama'])) {
     session_unset();
     session_destroy();
     header("Location: daftar_kuis.php");
     exit;
 }
 
-
-$_SESSION['flow_step'] = 'IN_KUIS';
-
-
-if (!isset($_SESSION['kuis_id'], $_SESSION['nama'])) {
+if ($_SESSION['flow_step'] === 'SELESAI') {
     session_unset();
     session_destroy();
     header("Location: daftar_kuis.php");
     exit;
 }
 
+if ($_SESSION['flow_step'] === 'BIODATA_OK') {
+    $_SESSION['flow_step']  = 'IN_KUIS';
+    $_SESSION['kuis_mulai'] = true;
+    $_SESSION['jawaban']    = [];
+    unset($_SESSION['soal_acak_' . $_SESSION['kuis_id']]);
+} elseif ($_SESSION['flow_step'] !== 'IN_KUIS' || !isset($_SESSION['kuis_mulai'])) {
+    session_unset();
+    session_destroy();
+    header("Location: daftar_kuis.php");
+    exit;
+}
 
 function db(): PDO {
     static $pdo;
@@ -45,17 +47,51 @@ function db(): PDO {
     );
 }
 
-$paketId = (int) $_SESSION['kuis_id'];
+function get_user_id(PDO $pdo): ?int
+{
+    if (!empty($_SESSION['user_id'])) {
+        return (int) $_SESSION['user_id'];
+    }
 
+    if (!empty($_SESSION['username'])) {
+        $st = $pdo->prepare("SELECT id FROM users WHERE username = ? LIMIT 1");
+        $st->execute([trim((string)$_SESSION['username'])]);
+        $id = $st->fetchColumn();
+        if ($id !== false) {
+            $_SESSION['user_id'] = (int)$id;
+            return (int)$id;
+        }
+    }
 
-if (!isset($_SESSION['kuis_mulai'])) {
-    $_SESSION['kuis_mulai'] = true;
-    $_SESSION['jawaban'] = [];
-    unset($_SESSION['soal_acak_' . $paketId]);
+    if (!empty($_SESSION['nama'])) {
+        $st = $pdo->prepare("SELECT id FROM users WHERE nama = ? ORDER BY id DESC LIMIT 1");
+        $st->execute([trim((string)$_SESSION['nama'])]);
+        $id = $st->fetchColumn();
+        if ($id !== false) {
+            $_SESSION['user_id'] = (int)$id;
+            return (int)$id;
+        }
+    }
+
+    return null;
 }
 
+function simpan_aktivitas_kuis(PDO $pdo, int $userId, int $kuisId, string $judulKuis, int $skor): int
+{
+    $lulus = $skor >= 55 ? 1 : 0;
 
-$stmt = db()->prepare("SELECT judul FROM kuis_paket WHERE id = ?");
+    $st = $pdo->prepare("
+        INSERT INTO user_aktivitas_kuis (user_id, kuis_id, judul_kuis, skor, lulus, sertifikat_path)
+        VALUES (?, ?, ?, ?, ?, NULL)
+    ");
+    $st->execute([$userId, $kuisId, $judulKuis, $skor, $lulus]);
+
+    return (int) $pdo->lastInsertId();
+}
+
+$paketId = (int) $_SESSION['kuis_id'];
+
+$stmt = db()->prepare("SELECT id, judul FROM kuis_paket WHERE id = ?");
 $stmt->execute([$paketId]);
 $paket = $stmt->fetch();
 
@@ -89,7 +125,9 @@ if (!isset($_SESSION[$sessionKey])) {
         $keys = array_keys($opsi);
         shuffle($keys);
         $s['opsi_acak'] = [];
-        foreach ($keys as $k) $s['opsi_acak'][$k] = $opsi[$k];
+        foreach ($keys as $k) {
+            $s['opsi_acak'][$k] = $opsi[$k];
+        }
     }
     unset($s);
 
@@ -98,7 +136,6 @@ if (!isset($_SESSION[$sessionKey])) {
 
 $soal = $_SESSION[$sessionKey];
 $totalSoal = count($soal);
-
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
@@ -116,8 +153,22 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
         }
 
-        $_SESSION['skor']   = round(($benar / $totalSoal) * 100);
+        $skor = (int) round(($benar / $totalSoal) * 100);
+
+        $_SESSION['skor']   = $skor;
         $_SESSION['materi'] = $paket['judul'];
+
+        $userId = get_user_id(db());
+        if ($userId !== null) {
+            $aktivitasId = simpan_aktivitas_kuis(
+                db(),
+                $userId,
+                (int)$paket['id'],
+                (string)$paket['judul'],
+                $skor
+            );
+            $_SESSION['aktivitas_kuis_id'] = $aktivitasId;
+        }
 
         $_SESSION['flow_step'] = 'SELESAI';
 
@@ -127,7 +178,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         exit;
     }
 }
-
 
 $index = isset($_POST['target_index']) ? (int)$_POST['target_index'] : 0;
 $index = max(0, min($index, $totalSoal - 1));
@@ -386,16 +436,16 @@ body{
             <div class="soal-card">
                 <form method="post" id="quizForm">
                     <input type="hidden" name="target_index" id="target_index" value="<?= $index ?>">
-                    <input type="hidden" name="soal_id" value="<?= $curSoal['id'] ?>">
+                    <input type="hidden" name="soal_id" value="<?= (int)$curSoal['id'] ?>">
 
                     <p><b><?= $index + 1 ?>.</b> <?= htmlspecialchars($curSoal['pertanyaan']) ?></p>
 
                     <div class="opsi-container">
                         <?php foreach ($curSoal['opsi_acak'] as $k => $v): ?>
-                            <label class="opsi-item">
-                                <input type="radio" name="jawaban" value="<?= $k ?>"
+                            <label>
+                                <input type="radio" name="jawaban" value="<?= htmlspecialchars($k) ?>"
                                     <?= (($jawabanTersimpan[$curSoal['id']] ?? '') === $k) ? 'checked' : '' ?>>
-                                <span><?= htmlspecialchars($v) ?></span>
+                                <?= htmlspecialchars($v) ?>
                             </label>
                         <?php endforeach; ?>
                     </div>
@@ -403,7 +453,9 @@ body{
                     <div class="d-flex justify-content-between mt-4">
                         <?php if ($index > 0): ?>
                             <button type="button" class="btn-custom btn-prev" onclick="navigate(<?= $index - 1 ?>)">Sebelumnya</button>
-                        <?php else: ?><div></div><?php endif; ?>
+                        <?php else: ?>
+                            <div></div>
+                        <?php endif; ?>
 
                         <?php if ($index < $totalSoal - 1): ?>
                             <button type="button" class="btn-custom btn-next" onclick="navigate(<?= $index + 1 ?>)">Selanjutnya</button>
@@ -451,7 +503,7 @@ body{
 <div class="modal-overlay" id="confirmSubmitModal">
     <div class="modal-content-custom">
         <p class="popup-title">Konfirmasi</p>
-        <p class="popup-message">Apakah Anda yakin akan mengakhiri Kuis? Pastikan kembali jawaban Anda.</p>
+        <p class="popup-message">Apakah Anda yakin akan mengirimkan jawaban Kuis? Pastikan kembali jawaban Anda.</p>
         <div class="popup-actions">
             <button class="btn-modal-cancel" onclick="closeModal('confirmSubmitModal')">Tidak</button>
             <button class="btn-modal-action" onclick="finalSubmit()">Iya</button>
@@ -476,7 +528,6 @@ function attemptSubmit(){
     const radio=document.querySelector('input[name="jawaban"]:checked');
     let total=answered;
     if(!currentAnswered&&radio)total++;
-    
     if(total<totalSoal)document.getElementById('incompleteModal').style.display='flex';
     else document.getElementById('confirmSubmitModal').style.display='flex';
 }
