@@ -4,8 +4,8 @@ session_start();
 
 require_once 'db.php';
 
-const ADMIN_USERNAME = 'AdminSinauDemokrasi';
-const ADMIN_PASSWORD = 'KPUYogyakart4#';
+const ADMIN_USERNAME = '';
+const ADMIN_PASSWORD = '';
 
 if (
     isset($_SESSION['last_activity'], $_SESSION['timeout']) &&
