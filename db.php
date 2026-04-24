@@ -1,9 +1,9 @@
 <?php
 declare(strict_types=1);
 
-$DB_HOST = "localhost";
-$DB_NAME = "sinau_pemilu";
-$DB_USER = "root";
+$DB_HOST = "";
+$DB_NAME = "";
+$DB_USER = "";
 $DB_PASS = "";
 
 function db(): PDO {
