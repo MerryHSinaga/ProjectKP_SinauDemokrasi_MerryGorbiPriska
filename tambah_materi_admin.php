@@ -1296,8 +1296,8 @@ body{
     btnLogoutDesktop.addEventListener('click', (e) => {
       e.preventDefault();
       openPopup({
-        title: "Konfirmasi",
-        message: "Yakin ingin logout?",
+        title: "Konfirmasi Logout",
+        message: "Apakah Anda yakin ingin keluar dari akun ini?",
         okText: "Logout",
         cancelText: "Batal",
         onOk: () => logoutFormDesktop.submit()
@@ -1527,7 +1527,7 @@ body{
 
       showConfirm({
         title: "Konfirmasi",
-        message: "Perubahan belum disimpan, yakin ingin kembali?",
+        message: "Perubahan belum disimpan, apakah Anda yakin ingin kembali?",
         okText: "Kembali",
         cancelText: "Batal",
         onOk: () => {
@@ -1702,7 +1702,7 @@ body{
       e.preventDefault();
       showConfirm({
         title: "Konfirmasi",
-        message: "Perubahan belum disimpan, yakin ingin keluar?",
+        message: "Perubahan belum disimpan, apakah Anda yakin ingin keluar?",
         okText: "Keluar",
         cancelText: "Batal",
         onOk: () => {
@@ -1794,7 +1794,7 @@ body{
 
     showConfirm({
       title: "Konfirmasi",
-      message: "Yakin ingin disimpan?",
+      message: "Apakah Anda yakin ingin menyimpan perubahan ini?",
       okText: "Simpan",
       cancelText: "Batal",
       onOk: () => {
@@ -1818,7 +1818,7 @@ body{
       e.preventDefault();
       showConfirm({
         title: "Konfirmasi",
-        message: "Yakin ingin menghapus materi ini?",
+        message: "Apakah Anda yakin ingin menghapus materi ini?",
         okText: "Hapus",
         cancelText: "Batal",
         onOk: () => form.submit()
