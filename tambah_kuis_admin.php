@@ -1121,7 +1121,7 @@ textarea.big{
             <label class="fw-bold mb-2" style="font-size:14px;">Bagian</label>
             <div class="select-wrap">
               <select class="pill-input" id="bagianInput" name="bagian" required>
-              <option value="">-- Pilih Subbagian --</option>
+              <option value="">-- Pilih Bagian --</option>
               <option value="Keuangan, Umum dan Logistik">Keuangan, Umum dan Logistik</option>
               <option value="Penyelenggara Pemilu, Partisipasi Hubungan Masyarakat, Hubungan dan SDM">Penyelenggara Pemilu, Partisipasi Hubungan Masyarakat, Hubungan dan SDM</option>
               <option value="Perencanaan, Data dan Informasi">Perencanaan, Data dan Informasi</option>
@@ -1370,8 +1370,8 @@ textarea.big{
     form.addEventListener("submit", (e) => {
       e.preventDefault();
       showConfirm({
-        title: "Konfirmasi Hapus",
-        message: "Yakin ingin menghapus soal ini?",
+        title: "Konfirmasi Penghapusan",
+        message: "Apakah Anda yakin ingin menghapus soal ini?",
         okText: "Hapus",
         cancelText: "Batal",
         onOk: () => form.submit()
@@ -1402,8 +1402,8 @@ textarea.big{
 
     e.preventDefault();
     showConfirm({
-      title: "Perubahan belum disimpan",
-      message: "Perubahan belum disimpan, yakin ingin keluar?",
+      title: "Perhatian",
+      message: "Perubahan belum disimpan, apakah Anda yakin ingin keluar?",
       okText: "Keluar",
       cancelText: "Batal",
       onOk: () => {
@@ -1750,7 +1750,7 @@ function buildNumbers(){
 
     showConfirm({
       title: "Konfirmasi",
-      message: "Yakin ingin disimpan?",
+      message: "Apakah Anda yakin ingin menyimpan perubahan ini?",
       okText: "Simpan",
       cancelText: "Batal",
       onOk: () => {
