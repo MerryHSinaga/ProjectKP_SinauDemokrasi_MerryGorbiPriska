@@ -62,12 +62,10 @@ function format_datetime_id(?string $datetime): string
     return $timestamp === false ? (string)$datetime : date('d M Y, H:i', $timestamp);
 }
 
-
 function ensure_tables(): void
 {
     $db = db();
     
-
     $db->exec(
         "CREATE TABLE IF NOT EXISTS users (
             id INT AUTO_INCREMENT PRIMARY KEY,
@@ -95,7 +93,6 @@ function ensure_tables(): void
     $st = $db->query("SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'users'");
     $existingCols = $st->fetchAll(PDO::FETCH_COLUMN);
     
-   
     if (!in_array('email', $existingCols)) {
         $db->exec("ALTER TABLE users ADD COLUMN email VARCHAR(120) DEFAULT NULL AFTER username");
         $existingCols[] = 'email';
@@ -170,7 +167,6 @@ $userStmt = db()->prepare($userSql);
 $userStmt->execute($userParams);
 $users = $userStmt->fetchAll(PDO::FETCH_ASSOC);
 
-
 $selectedUser = null;
 $activities = [];
 
@@ -194,7 +190,6 @@ if ($selectedUserId > 0) {
 }
 
 $site_title = 'Admin | Profil User';
-
 if(file_exists('identitas.php')) include 'identitas.php';
 ?>
 <!doctype html>
@@ -210,7 +205,7 @@ if(file_exists('identitas.php')) include 'identitas.php';
 <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.css" rel="stylesheet">
 
 <style>
-
+/* CSS tetap dibiarkan sama persis untuk mempertahankan tampilan */
 :root{
   --maroon:#700D09;
   --bg:#E9EDFF;
@@ -428,6 +423,16 @@ body{
 .btn-search:hover{
   color:#fff;
   filter:brightness(1.05);
+}
+
+.btn-search-reset{
+  background:#eef1f6;
+  color:#243246;
+}
+
+.btn-search-reset:hover{
+  color:#243246;
+  background:#e3e8f1;
 }
 
 .search-helper{
@@ -822,12 +827,34 @@ body{
   }
 
   .search-box{
-    padding:14px 14px 0;
+    padding:14px 14px 8px;
+    min-height:0 !important;
+    height:auto !important;
   }
 
   .search-form{
     flex-direction:column;
     align-items:stretch;
+    justify-content:flex-start;
+    gap:10px;
+    min-height:0 !important;
+    height:auto !important;
+    margin:0;
+  }
+
+  .search-input-wrap{
+    flex:1 1 auto;
+    width:100%;
+    min-height:0;
+  }
+
+  .search-helper{
+    margin:8px 0 0;
+  }
+
+  .btn-search,
+  .btn-search-reset{
+    width:100%;
   }
 
   .detail-wrap{padding:16px}
@@ -853,7 +880,8 @@ body{
   .user-list{
     max-height:none;
     overflow:visible;
-    padding:10px;
+    padding:8px 10px 12px;
+    margin:0;
   }
 
   .user-item{
@@ -900,7 +928,7 @@ body{
     </a>
 
     <a href="admin.php" class="brand">
-      <img src="assets/LogoKPU.png" alt="KPU">
+      <img src="Asset/LogoKPU.png" alt="KPU">
       <div class="brand-text">
         <strong>KPU</strong><br>
         <span>DIY</span>
@@ -929,7 +957,7 @@ body{
           <?php endif; ?>
 
           <div class="search-input-wrap">
-           
+            <i class="bi bi-search search-input-icon"></i>
             <input
               type="text"
               name="search"
@@ -940,6 +968,11 @@ body{
             >
           </div>
 
+             <?php if ($searchQuery !== ''): ?>
+            <a href="<?= h(build_user_list_url()) ?>" class="btn-search-reset">
+              <i class="bi bi-arrow-clockwise"></i> Reset
+            </a>
+          <?php endif; ?>
         </form>
 
         <div class="search-helper">
@@ -1115,7 +1148,6 @@ body{
 </div>
 
 <script>
-// JS dibiarkan sama persis
 (function(){
   const popupOverlay = document.getElementById('popupOverlay');
   const popupTitle   = document.getElementById('popupTitle');
