@@ -590,8 +590,8 @@ body{
     btnLogoutDesktop.addEventListener('click', (e) => {
       e.preventDefault();
       openPopup({
-        title: "Konfirmasi",
-        message: "Yakin ingin logout?",
+        title: "Konfirmasi Logout",
+        message: "Apakah Anda yakin ingin logout dari akun ini?",
         okText: "Logout",
         cancelText: "Batal",
         onOk: () => logoutFormDesktop.submit()
