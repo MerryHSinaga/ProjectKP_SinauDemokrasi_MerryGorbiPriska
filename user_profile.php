@@ -1048,7 +1048,7 @@ include 'identitas.php';
     <div class="popup-content-custom">
         <p class="popup-title">Konfirmasi Logout</p>
         <p class="popup-message">
-            Apakah Anda yakin ingin logout dari akun ini?</p>
+            Apakah Anda yakin ingin keluar dari akun ini?</p>
         <div class="popup-actions">
             <button type="button" class="btn-popup-cancel" id="btnCancelLogout">Batal</button>
             <button type="button" class="btn-popup-action" id="btnConfirmLogout">Logout</button>
