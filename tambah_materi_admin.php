@@ -42,7 +42,7 @@ if (!is_dir($UPLOAD_DIR_THUMB)) {
 
 $BAGIAN_OPTIONS = [
   'Keuangan, Umum dan Logistik',
-  'Penyelenggara Pemilu, Partisipasi Hubungan Masyarakat, Hubungan dan SDM',
+  'Penyelenggara Pemilu, Partisipasi Hubungan Masyarakat, Hukum dan SDM',
   'Perencanaan, Data dan Informasi'
 ];
 $DEFAULT_BAGIAN = 'Keuangan, Umum dan Logistik';
@@ -148,7 +148,7 @@ function friendly_error_message(string $msg): ?string {
         "Bagian wajib dipilih.",
         "URL Link wajib diisi.",
         "URL Link tidak valid.",
-        "Thumbnail hanya boleh JPG, JPEG, PNG, atau WEBP.",
+        "Thumbnail hanya boleh JPG, JPEG, atau PNG.",
         "Ukuran thumbnail maksimal 2MB.",
         "Upload thumbnail gagal.",
         "Gagal menyimpan thumbnail.",
@@ -238,12 +238,21 @@ function upload_one_video(array $file, int $maxBytes, string $destDir): array {
 function upload_thumbnail(?array $file): ?string {
     global $UPLOAD_DIR_THUMB;
 
-    if (!$file || !isset($file['tmp_name']) || !is_uploaded_file($file['tmp_name'])) {
+    if (!$file) {
         return null;
     }
 
-    $err = (int)($file['error'] ?? UPLOAD_ERR_OK);
+    $err = (int)($file['error'] ?? UPLOAD_ERR_NO_FILE);
+    if ($err === UPLOAD_ERR_NO_FILE) {
+        return null;
+    }
+
     if ($err !== UPLOAD_ERR_OK) {
+        $msg = upload_error_to_message($err);
+        throw new RuntimeException($msg !== "" ? $msg : "Upload thumbnail gagal.");
+    }
+
+    if (!isset($file['tmp_name']) || !is_uploaded_file($file['tmp_name'])) {
         throw new RuntimeException("Upload thumbnail gagal.");
     }
 
@@ -252,8 +261,26 @@ function upload_thumbnail(?array $file): ?string {
     }
 
     $ext = strtolower(pathinfo((string)($file['name'] ?? ''), PATHINFO_EXTENSION));
-    if (!in_array($ext, ['jpg','jpeg','png','webp'], true)) {
-        throw new RuntimeException("Thumbnail hanya boleh JPG, JPEG, PNG, atau WEBP.");
+    if (!in_array($ext, ['jpg','jpeg','png'], true)) {
+        throw new RuntimeException("Thumbnail hanya boleh JPG, JPEG, atau PNG.");
+    }
+
+    $mime = "";
+    try {
+        $finfo = new finfo(FILEINFO_MIME_TYPE);
+        $mime = (string)$finfo->file((string)$file['tmp_name']);
+    } catch (Throwable $e) {
+        $mime = "";
+    }
+
+    $allowedMimes = ['image/jpeg', 'image/png'];
+    if ($mime !== "" && !in_array($mime, $allowedMimes, true)) {
+        throw new RuntimeException("Thumbnail hanya boleh JPG, JPEG, atau PNG.");
+    }
+
+    $imageInfo = @getimagesize((string)$file['tmp_name']);
+    if ($imageInfo === false || !isset($imageInfo['mime']) || !in_array((string)$imageInfo['mime'], $allowedMimes, true)) {
+        throw new RuntimeException("Thumbnail hanya boleh JPG, JPEG, atau PNG.");
     }
 
     $name = safe_name('thumb_materi', $ext);
@@ -273,7 +300,7 @@ function ensure_tables(): void {
             judul VARCHAR(255) NOT NULL,
             bagian ENUM(
               'Keuangan, Umum dan Logistik',
-              'Penyelenggara Pemilu, Partisipasi Hubungan Masyarakat, Hubungan dan SDM',
+              'Penyelenggara Pemilu, Partisipasi Hubungan Masyarakat, Hukum dan SDM',
               'Perencanaan, Data dan Informasi'
             ) NOT NULL DEFAULT 'Keuangan, Umum dan Logistik',
             tipe ENUM('pdf','video','link') NOT NULL DEFAULT 'pdf',
@@ -290,7 +317,7 @@ function ensure_tables(): void {
             ALTER TABLE materi
             ADD COLUMN bagian ENUM(
               'Keuangan, Umum dan Logistik',
-              'Penyelenggara Pemilu, Partisipasi Hubungan Masyarakat, Hubungan dan SDM',
+              'Penyelenggara Pemilu, Partisipasi Hubungan Masyarakat, Hukum dan SDM',
               'Perencanaan, Data dan Informasi'
             ) NOT NULL DEFAULT 'Keuangan, Umum dan Logistik'
             AFTER judul
@@ -301,7 +328,7 @@ function ensure_tables(): void {
         ALTER TABLE materi
         MODIFY COLUMN bagian ENUM(
           'Keuangan, Umum dan Logistik',
-          'Penyelenggara Pemilu, Partisipasi Hubungan Masyarakat, Hubungan dan SDM',
+          'Penyelenggara Pemilu, Partisipasi Hubungan Masyarakat, Hukum dan SDM',
           'Perencanaan, Data dan Informasi'
         ) NOT NULL DEFAULT 'Keuangan, Umum dan Logistik'
     ");
@@ -1120,9 +1147,10 @@ body{
           </select>
         </div>
 
-        <div class="label-plain mt-3">Thumbnail Materi (opsional)</div>
+        <div class="label-plain mt-3">Thumbnail Materi</div>
+        <div class="text-muted" style="font-size:12px;margin-bottom:8px;">Catatan: thumbnail bersifat opsional. Format yang diperbolehkan hanya JPG, JPEG, atau PNG. Maksimal 2MB.</div>
         <div class="file-pill-wrap">
-          <input type="file" name="thumbnail" id="thumbnailInput" class="file-pill-input" accept=".jpg,.jpeg,.png,.webp">
+          <input type="file" name="thumbnail" id="thumbnailInput" class="file-pill-input" accept=".jpg,.jpeg,.png,image/jpeg,image/png">
           <label class="file-pill" for="thumbnailInput">
             <span class="file-pill-btn">Pilih File</span>
             <span class="file-pill-name" id="thumbnailName">Belum ada file dipilih</span>
@@ -1454,6 +1482,22 @@ body{
     return "";
   }
 
+  function validateThumbnailFile(file){
+    if(!file) return "";
+
+    const name = (file.name || "").toLowerCase();
+    const allowedExt = [".jpg", ".jpeg", ".png"];
+    const extOk = allowedExt.some(ext => name.endsWith(ext));
+
+    const type = (file.type || "").toLowerCase();
+    const allowedTypes = ["image/jpeg", "image/png"];
+    const typeOk = type === "" || allowedTypes.includes(type);
+
+    if(!extOk || !typeOk) return "Thumbnail hanya boleh JPG, JPEG, atau PNG.";
+    if(file.size > 2 * 1024 * 1024) return "Ukuran thumbnail maksimal 2MB.";
+    return "";
+  }
+
   function validateJudul(val){
     const judul = (val || "").trim();
     if(judul.length === 0) return "Judul wajib diisi.";
@@ -1652,6 +1696,17 @@ body{
   thumbnailInput.addEventListener('change', ()=>{
     if (thumbnailInput.files && thumbnailInput.files[0]) {
       const file = thumbnailInput.files[0];
+      const msg = validateThumbnailFile(file);
+
+      if (msg) {
+        thumbnailInput.value = "";
+        thumbnailName.textContent = "Belum ada file dipilih";
+        showThumb("");
+        recomputeDirty();
+        showError(msg);
+        return;
+      }
+
       thumbnailName.textContent = file.name;
       const reader = new FileReader();
       reader.onload = e => showThumb(e.target.result);
@@ -1737,6 +1792,16 @@ body{
     const mode = modeInput.value || "pdf";
     const hasPdf = (pdfPicker.files && pdfPicker.files.length > 0);
     const hasVideo = (videoPicker.files && videoPicker.files.length > 0);
+    const hasThumb = (thumbnailInput.files && thumbnailInput.files.length > 0);
+
+    if (hasThumb) {
+      const thumbMsg = validateThumbnailFile(thumbnailInput.files[0]);
+      if (thumbMsg) {
+        e.preventDefault();
+        showError(thumbMsg);
+        return;
+      }
+    }
 
     if (mode === "pdf") {
       if(currentAction === "add" && !hasPdf){
